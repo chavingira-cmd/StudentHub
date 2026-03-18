@@ -19,7 +19,8 @@ import {
   X,
   Mail,
   Sun,
-  Moon
+  Moon,
+  Download
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import Markdown from 'react-markdown';
@@ -27,7 +28,6 @@ import { format } from 'date-fns';
 import { cn } from './lib/utils';
 import { User, Resource, Flashcard, PlannerTask } from './types';
 import { generateStudyNotes, generateFlashcards } from './services/geminiService';
-import { Download } from 'lucide-react';
 
 interface BeforeInstallPromptEvent extends Event {
   readonly platforms: string[];
@@ -553,6 +553,7 @@ const Planner = ({ user }: { user: User }) => {
   const [tasks, setTasks] = useState<PlannerTask[]>([]);
   const [newTask, setNewTask] = useState('');
   const [newDate, setNewDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [showCelebration, setShowCelebration] = useState(false);
 
   useEffect(() => {
     fetch(`/api/planner/${user.id}`).then(res => res.json()).then(setTasks);
@@ -573,6 +574,12 @@ const Planner = ({ user }: { user: User }) => {
 
   const toggleTask = async (task: PlannerTask) => {
     const newStatus = task.completed ? 0 : 1;
+    
+    if (newStatus === 1) {
+      setShowCelebration(true);
+      setTimeout(() => setShowCelebration(false), 2000);
+    }
+
     await fetch(`/api/planner/${task.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -582,7 +589,21 @@ const Planner = ({ user }: { user: User }) => {
   };
 
   return (
-    <div className="max-w-3xl mx-auto space-y-8">
+    <div className="max-w-3xl mx-auto space-y-8 relative">
+      <AnimatePresence>
+        {showCelebration && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.5, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.5, y: -20 }}
+            className="fixed bottom-10 left-1/2 -translate-x-1/2 z-50 bg-emerald-500 text-white px-6 py-3 rounded-full font-bold shadow-lg flex items-center gap-2"
+          >
+            <Sparkles size={20} />
+            Great job! Task completed.
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <header>
         <h1 className="text-3xl font-bold text-slate-900 dark:text-white transition-colors">Study Planner</h1>
         <p className="text-slate-500 dark:text-slate-400">Organize your study sessions and deadlines.</p>
@@ -612,23 +633,40 @@ const Planner = ({ user }: { user: User }) => {
       </form>
 
       <div className="space-y-4">
-        {tasks.map(task => (
-          <div 
-            key={task.id} 
-            className={cn(
-              "flex items-center gap-4 p-4 rounded-2xl border transition-all",
-              task.completed ? "bg-blue-50 dark:bg-blue-900/10 border-slate-100 dark:border-slate-800 opacity-60" : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-sm"
-            )}
-          >
-            <button onClick={() => toggleTask(task)} className="text-blue-600 dark:text-blue-400">
-              {task.completed ? <CheckCircle2 size={24} /> : <Circle className="text-slate-300 dark:text-slate-700" size={24} />}
-            </button>
-            <div className="flex-1">
-              <p className={cn("font-bold transition-colors", task.completed ? "text-slate-400 dark:text-slate-600 line-through" : "text-slate-900 dark:text-white")}>{task.title}</p>
-              <p className="text-xs text-slate-400 dark:text-slate-500">{format(new Date(task.date), 'PPP')}</p>
-            </div>
-          </div>
-        ))}
+        <AnimatePresence mode="popLayout">
+          {tasks.map(task => (
+            <motion.div 
+              layout
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ 
+                opacity: task.completed ? 0.6 : 1, 
+                x: 0,
+                scale: 1
+              }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              whileTap={{ scale: 0.98 }}
+              key={task.id} 
+              className={cn(
+                "flex items-center gap-4 p-4 rounded-2xl border transition-all",
+                task.completed ? "bg-blue-50 dark:bg-blue-900/10 border-slate-100 dark:border-slate-800" : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-sm"
+              )}
+            >
+              <button onClick={() => toggleTask(task)} className="text-blue-600 dark:text-blue-400 shrink-0">
+                <motion.div
+                  initial={false}
+                  animate={{ scale: task.completed ? [1, 1.2, 1] : 1 }}
+                  transition={{ duration: 0.3 }}
+                >
+                  {task.completed ? <CheckCircle2 size={24} /> : <Circle className="text-slate-300 dark:text-slate-700" size={24} />}
+                </motion.div>
+              </button>
+              <div className="flex-1 min-w-0">
+                <p className={cn("font-bold transition-colors truncate", task.completed ? "text-slate-400 dark:text-slate-600 line-through" : "text-slate-900 dark:text-white")}>{task.title}</p>
+                <p className="text-xs text-slate-400 dark:text-slate-500">{format(new Date(task.date), 'PPP')}</p>
+              </div>
+            </motion.div>
+          ))}
+        </AnimatePresence>
       </div>
     </div>
   );
@@ -743,7 +781,14 @@ export default function App() {
 
   useEffect(() => {
     const savedUser = localStorage.getItem('studenthub_user');
-    if (savedUser) setUser(JSON.parse(savedUser));
+    if (savedUser) {
+      try {
+        setUser(JSON.parse(savedUser));
+      } catch (e) {
+        console.error("Failed to parse saved user", e);
+        localStorage.removeItem('studenthub_user');
+      }
+    }
   }, []);
 
   useEffect(() => {
