@@ -2,6 +2,7 @@ import express from "express";
 import Database from "better-sqlite3";
 import path from "path";
 import { fileURLToPath } from "url";
+import { GoogleGenAI } from "@google/genai";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -160,6 +161,49 @@ app.post("/api/login", (req, res) => {
     user = { id: info.lastInsertRowid, email, username: email.split('@')[0] };
   }
   res.json(user);
+});
+
+let aiInstance: GoogleGenAI | null = null;
+function getAI() {
+  if (!aiInstance) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    aiInstance = new GoogleGenAI({
+      apiKey: apiKey || "",
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
+  }
+  return aiInstance;
+}
+
+app.post("/api/chatbot", async (req, res) => {
+  const { messages } = req.body;
+  
+  if (!messages || !Array.isArray(messages)) {
+    return res.status(400).json({ error: "Messages array is required" });
+  }
+
+  try {
+    const ai = getAI();
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: messages.map(m => ({
+        role: m.role === "assistant" ? "model" : m.role,
+        parts: [{ text: m.text || m.content }]
+      })),
+      config: {
+        systemInstruction: "You are 'Shumba', the friendly AI Study Tutor for StudentHub, aligned with the Zimbabwe Heritage-Based Curriculum (2024-2030). Your goal is to make learning easy, engaging, and extremely accessible for students. Since students can sometimes find long texts overwhelming, you must: 1. Explain complex academic concepts in simple, digestible, and friendly language. 2. Use bullet points, bold text, and brief summaries to break up information. 3. Be friendly and encourage the Ubuntu principle ('Hunhu/Unhu') and cultural pride. 4. Offer to quiz them, build fun study rhymes/songs, or explain processes using analogies matching local Zimbabwean contexts (e.g. comparing database indexing to sorting bags of grain or comparing CPU cache to quick-access tools at a domestic forge). Focus on being extremely clear so they don't have to read massive textbooks! Keep your answers relatively concise, highly engaging, and formatted beautifully in Markdown."
+      }
+    });
+
+    res.json({ text: response.text });
+  } catch (error: any) {
+    console.error("Chatbot error:", error);
+    res.status(500).json({ error: error.message || "Failed to generate AI response" });
+  }
 });
 
 export default app;

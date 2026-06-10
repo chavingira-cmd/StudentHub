@@ -1,5 +1,9 @@
 {
   "name": "StudentHub",
   "description": "A centralized digital learning platform aligned with the Zimbabwe Heritage-Based Curriculum (2024-2030), providing access to e-books, study notes, flashcards, and an AI-powered study planner.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
+

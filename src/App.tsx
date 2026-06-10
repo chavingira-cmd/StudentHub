@@ -20,7 +20,10 @@ import {
   Mail,
   Sun,
   Moon,
-  Download
+  Download,
+  Bot,
+  Send,
+  MessageSquare
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import Markdown from 'react-markdown';
@@ -55,6 +58,7 @@ const Sidebar = ({ user, onLogout, darkMode, onToggleTheme }: {
     { name: 'Notes', path: '/notes', icon: FileText },
     { name: 'Flashcards', path: '/flashcards', icon: Brain },
     { name: 'Planner', path: '/planner', icon: Calendar },
+    { name: 'AI Tutor', path: '/chatbot', icon: MessageSquare },
   ];
 
   return (
@@ -744,6 +748,182 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
   );
 };
 
+const TutorChatbot = () => {
+  const [messages, setMessages] = useState<{ role: 'user' | 'assistant'; text: string }[]>([
+    { 
+      role: 'assistant', 
+      text: "Mhoro / Salibonani! I'm **Shumba** 🦁, your StudentHub AI Tutor under the Zimbabwe Heritage-Based Curriculum (2024-2030).\n\nIf you find long textbook chapters exhausting, I'm here to make things simple. Ask me anything, or try one of the revision tools below!" 
+    }
+  ]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const chatEndRef = React.useRef<HTMLDivElement>(null);
+
+  const quickPrompts = [
+    { label: "Explain Unhu/Ubuntu principles", prompt: "Explain the main principles of Unhu/Ubuntu in Grade 7 Heritage Studies." },
+    { label: "Simplify Photosynthesis 🌿", prompt: "Explain photosynthesis simply with a direct, clear analogy." },
+    { label: "O-Level Ag Crop stages 🌾", prompt: "What are the key stages of maize production in O-Level Agriculture?" },
+    { label: "Give me a quick STEM quiz! 🧠", prompt: "Give me a fun multiple-choice question on computer hardware or Combined Science." }
+  ];
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, loading]);
+
+  const handleSendMessage = async (textToSend: string) => {
+    if (!textToSend.trim() || loading) return;
+
+    const userMessage = { role: 'user' as const, text: textToSend };
+    setMessages(prev => [...prev, userMessage]);
+    setInput('');
+    setLoading(true);
+
+    try {
+      const res = await fetch('/api/chatbot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          messages: [...messages, userMessage] 
+        })
+      });
+      const data = await res.json();
+      if (data.error) {
+        setMessages(prev => [...prev, { role: 'assistant', text: `Sorry, I hit a snag: ${data.error}` }]);
+      } else {
+        setMessages(prev => [...prev, { role: 'assistant', text: data.text }]);
+      }
+    } catch (err) {
+      console.error(err);
+      setMessages(prev => [...prev, { role: 'assistant', text: "I'm having trouble connecting right now. Please try again in a bit!" }]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    handleSendMessage(input);
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto space-y-6">
+      <header className="flex items-center gap-3">
+        <div className="w-12 h-12 bg-blue-100 dark:bg-blue-900/35 rounded-2xl flex items-center justify-center text-blue-600 dark:text-blue-400">
+          <Bot size={28} />
+        </div>
+        <div>
+          <h1 className="text-3xl font-bold text-slate-900 dark:text-white transition-colors flex items-center gap-2">
+            Ask Shumba AI <Sparkles className="text-amber-500 fill-amber-500 animate-pulse" size={18} />
+          </h1>
+          <p className="text-slate-500 dark:text-slate-400">Your lightning-fast companion for study summaries, explanations, and quick quizzes.</p>
+        </div>
+      </header>
+
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        {/* Left Side Info / Quick Chips */}
+        <div className="lg:col-span-1 space-y-4">
+          <div className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-4 animate-fadeIn">
+            <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <Sparkles size={16} className="text-blue-500" /> Quick Revision
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+              Skip deep reading. Tap a prompt below to quickly master key topics or start an instant knowledge test.
+            </p>
+            <div className="flex flex-col gap-2">
+              {quickPrompts.map((item, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => handleSendMessage(item.prompt)}
+                  className="w-full text-left text-xs bg-slate-50 dark:bg-slate-800/50 hover:bg-blue-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 p-3 rounded-xl border border-slate-100 dark:border-slate-700 hover:border-blue-200 dark:hover:border-blue-900 transition-all font-medium cursor-pointer"
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Chat Interface */}
+        <div className="lg:col-span-3 flex flex-col h-[550px] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-sm overflow-hidden">
+          {/* Messages Container */}
+          <div className="flex-1 overflow-y-auto p-6 space-y-4">
+            <AnimatePresence initial={false}>
+              {messages.map((message, index) => (
+                <motion.div
+                  key={index}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className={cn(
+                    "flex items-start gap-4",
+                    message.role === 'user' ? "flex-row-reverse" : "flex-row"
+                  )}
+                >
+                  {/* Avatar */}
+                  <div className={cn(
+                    "w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow-sm text-sm",
+                    message.role === 'user' 
+                      ? "bg-blue-600 text-white font-bold" 
+                      : "bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400"
+                  )}>
+                    {message.role === 'user' ? "ME" : "🦁"}
+                  </div>
+
+                  {/* Bubble */}
+                  <div className={cn(
+                    "max-w-[80%] p-4 rounded-2xl relative shadow-xs text-sm leading-relaxed",
+                    message.role === 'user' 
+                      ? "bg-blue-600 text-white rounded-tr-none" 
+                      : "bg-slate-50 dark:bg-slate-800/60 text-slate-800 dark:text-slate-200 border border-slate-100 dark:border-slate-800 rounded-tl-none"
+                  )}>
+                    <div className="prose prose-slate dark:prose-invert max-w-none">
+                      <Markdown>{message.text}</Markdown>
+                    </div>
+                  </div>
+                </motion.div>
+              ))}
+            </AnimatePresence>
+
+            {loading && (
+              <div className="flex items-start gap-4">
+                <div className="w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0 shadow-sm">
+                  🦁
+                </div>
+                <div className="bg-slate-50 dark:bg-slate-800/60 p-4 rounded-2xl rounded-tl-none border border-slate-100 dark:border-slate-800 flex items-center gap-1">
+                  <div className="w-2 h-2 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <div className="w-2 h-2 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                  <div className="w-2 h-2 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                </div>
+              </div>
+            )}
+            <div ref={chatEndRef} />
+          </div>
+
+          {/* Form */}
+          <form onSubmit={handleSubmit} className="p-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900 flex gap-2">
+            <input
+              type="text"
+              placeholder="Ask Shumba to summarize, explain, or test you..."
+              className="flex-1 px-4 py-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white text-sm"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              disabled={loading}
+            />
+            <button
+              type="submit"
+              disabled={loading || !input.trim()}
+              className="bg-blue-600 text-white p-3 rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center justify-center shrink-0 group cursor-pointer"
+            >
+              <Send size={18} className="group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
 // --- Main App ---
 
 export default function App() {
@@ -876,7 +1056,9 @@ export default function App() {
                   <Route path="/notes" element={<Notes />} />
                   <Route path="/flashcards" element={<Flashcards user={user} />} />
                   <Route path="/planner" element={<Planner user={user} />} />
+                  <Route path="/chatbot" element={<TutorChatbot />} />
                 </Routes>
+
               </div>
             </main>
           </>
