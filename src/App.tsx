@@ -23,7 +23,8 @@ import {
   Download,
   Bot,
   Send,
-  MessageSquare
+  MessageSquare,
+  Telescope
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import Markdown from 'react-markdown';
@@ -787,7 +788,7 @@ const TutorChatbot = () => {
   const [messages, setMessages] = useState<{ role: 'user' | 'assistant'; text: string }[]>([
     { 
       role: 'assistant', 
-      text: "Mhoro / Salibonani! I'm **StudenthubAI** 🦁, your StudentHub AI Tutor under the Zimbabwe Heritage-Based Curriculum (2024-2030).\n\nIf you find long textbook chapters exhausting, I'm here to make things simple. Ask me anything, or try one of the revision tools below!" 
+      text: "Mhoro / Salibonani! I'm **StudenthubAI** 🔭, your StudentHub AI Tutor under the Zimbabwe Heritage-Based Curriculum (2024-2030).\n\nIf you find long textbook chapters exhausting, I'm here to make things simple. Ask me anything, or try one of the revision tools below!" 
     }
   ]);
   const [input, setInput] = useState('');
@@ -843,8 +844,8 @@ const TutorChatbot = () => {
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <header className="flex items-center gap-3">
-        <div className="w-12 h-12 bg-blue-100 dark:bg-blue-900/35 rounded-2xl flex items-center justify-center text-blue-600 dark:text-blue-400">
-          <Bot size={28} />
+        <div className="w-12 h-12 bg-amber-100 dark:bg-amber-900/35 rounded-2xl flex items-center justify-center text-amber-600 dark:text-amber-400">
+          <Telescope size={28} />
         </div>
         <div>
           <h1 className="text-3xl font-bold text-slate-900 dark:text-white transition-colors flex items-center gap-2">
@@ -901,7 +902,7 @@ const TutorChatbot = () => {
                       ? "bg-blue-600 text-white font-bold" 
                       : "bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400"
                   )}>
-                    {message.role === 'user' ? "ME" : "🦁"}
+                    {message.role === 'user' ? "ME" : <Telescope size={18} className="text-amber-600 dark:text-amber-400" />}
                   </div>
 
                   {/* Bubble */}
@@ -922,7 +923,7 @@ const TutorChatbot = () => {
             {loading && (
               <div className="flex items-start gap-4">
                 <div className="w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0 shadow-sm">
-                  🦁
+                  <Telescope size={18} className="text-amber-600 dark:text-amber-400 animate-pulse" />
                 </div>
                 <div className="bg-slate-50 dark:bg-slate-800/60 p-4 rounded-2xl rounded-tl-none border border-slate-100 dark:border-slate-800 flex items-center gap-1">
                   <div className="w-2 h-2 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
