@@ -787,7 +787,7 @@ const TutorChatbot = () => {
   const [messages, setMessages] = useState<{ role: 'user' | 'assistant'; text: string }[]>([
     { 
       role: 'assistant', 
-      text: "Mhoro / Salibonani! I'm **Shumba** 🦁, your StudentHub AI Tutor under the Zimbabwe Heritage-Based Curriculum (2024-2030).\n\nIf you find long textbook chapters exhausting, I'm here to make things simple. Ask me anything, or try one of the revision tools below!" 
+      text: "Mhoro / Salibonani! I'm **StudenthubAI** 🦁, your StudentHub AI Tutor under the Zimbabwe Heritage-Based Curriculum (2024-2030).\n\nIf you find long textbook chapters exhausting, I'm here to make things simple. Ask me anything, or try one of the revision tools below!" 
     }
   ]);
   const [input, setInput] = useState('');
@@ -848,7 +848,7 @@ const TutorChatbot = () => {
         </div>
         <div>
           <h1 className="text-3xl font-bold text-slate-900 dark:text-white transition-colors flex items-center gap-2">
-            Ask Shumba AI <Sparkles className="text-amber-500 fill-amber-500 animate-pulse" size={18} />
+            Ask StudenthubAI <Sparkles className="text-amber-500 fill-amber-500 animate-pulse" size={18} />
           </h1>
           <p className="text-slate-500 dark:text-slate-400">Your lightning-fast companion for study summaries, explanations, and quick quizzes.</p>
         </div>
@@ -938,7 +938,7 @@ const TutorChatbot = () => {
           <form onSubmit={handleSubmit} className="p-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900 flex gap-2">
             <input
               type="text"
-              placeholder="Ask Shumba to summarize, explain, or test you..."
+              placeholder="Ask StudenthubAI to summarize, explain, or test you..."
               className="flex-1 px-4 py-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white text-sm"
               value={input}
               onChange={(e) => setInput(e.target.value)}
