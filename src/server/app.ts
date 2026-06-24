@@ -3,6 +3,9 @@ import Database from "better-sqlite3";
 import path from "path";
 import { fileURLToPath } from "url";
 import { GoogleGenAI } from "@google/genai";
+import multer from "multer";
+// @ts-ignore
+import pdf from "pdf-parse";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -180,7 +183,7 @@ function getAI() {
 }
 
 app.post("/api/chatbot", async (req, res) => {
-  const { messages } = req.body;
+  const { messages, documentContext } = req.body;
   
   if (!messages || !Array.isArray(messages)) {
     return res.status(400).json({ error: "Messages array is required" });
@@ -188,6 +191,12 @@ app.post("/api/chatbot", async (req, res) => {
 
   try {
     const ai = getAI();
+    let systemInstruction = "You are 'StudenthubAI', the friendly AI Study Tutor for StudentHub, aligned with the Zimbabwe Heritage-Based Curriculum (2024-2030). Your goal is to make learning easy, engaging, and extremely accessible for students. Since students can sometimes find long texts overwhelming, you must: 1. Explain complex academic concepts in simple, digestible, and friendly language. 2. Use bullet points, bold text, and brief summaries to break up information. 3. Be friendly and encourage the Ubuntu principle ('Hunhu/Unhu') and cultural pride. 4. Offer to quiz them, build fun study rhymes/songs, or explain processes using analogies matching local Zimbabwean contexts (e.g. comparing database indexing to sorting bags of grain or comparing CPU cache to quick-access tools at a domestic forge). Focus on being extremely clear so they don't have to read massive textbooks! Keep your answers relatively concise, highly engaging, and formatted beautifully in Markdown.";
+
+    if (documentContext) {
+      systemInstruction += `\n\n[ATTACHED DOCUMENT CONTEXT]\nThe student has attached a syllabus or study document. Use the following content extracted from this document as your primary reference and context source to answer, search, or summarize according to their prompts:\n${documentContext}\n[END OF ATTACHED DOCUMENT CONTEXT]`;
+    }
+
     const response = await ai.models.generateContent({
       model: "gemini-3.5-flash",
       contents: messages.map(m => ({
@@ -195,7 +204,7 @@ app.post("/api/chatbot", async (req, res) => {
         parts: [{ text: m.text || m.content }]
       })),
       config: {
-        systemInstruction: "You are 'StudenthubAI', the friendly AI Study Tutor for StudentHub, aligned with the Zimbabwe Heritage-Based Curriculum (2024-2030). Your goal is to make learning easy, engaging, and extremely accessible for students. Since students can sometimes find long texts overwhelming, you must: 1. Explain complex academic concepts in simple, digestible, and friendly language. 2. Use bullet points, bold text, and brief summaries to break up information. 3. Be friendly and encourage the Ubuntu principle ('Hunhu/Unhu') and cultural pride. 4. Offer to quiz them, build fun study rhymes/songs, or explain processes using analogies matching local Zimbabwean contexts (e.g. comparing database indexing to sorting bags of grain or comparing CPU cache to quick-access tools at a domestic forge). Focus on being extremely clear so they don't have to read massive textbooks! Keep your answers relatively concise, highly engaging, and formatted beautifully in Markdown."
+        systemInstruction
       }
     });
 
@@ -203,6 +212,51 @@ app.post("/api/chatbot", async (req, res) => {
   } catch (error: any) {
     console.error("Chatbot error:", error);
     res.status(500).json({ error: error.message || "Failed to generate AI response" });
+  }
+});
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024, // limit to 10MB
+  },
+});
+
+app.post("/api/parse-file", upload.single("file"), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: "No file uploaded" });
+  }
+
+  try {
+    const fileBuffer = req.file.buffer;
+    const originalName = req.file.originalname.toLowerCase();
+
+    let text = "";
+
+    if (originalName.endsWith(".pdf")) {
+      const pdfData = await pdf(fileBuffer);
+      text = pdfData.text;
+    } else if (
+      originalName.endsWith(".txt") ||
+      originalName.endsWith(".md") ||
+      originalName.endsWith(".csv") ||
+      originalName.endsWith(".json")
+    ) {
+      text = fileBuffer.toString("utf-8");
+    } else {
+      return res.status(400).json({
+        error: "Unsupported file format. Please upload a PDF, TXT, MD, CSV, or JSON file.",
+      });
+    }
+
+    res.json({ 
+      text, 
+      filename: req.file.originalname, 
+      size: req.file.size 
+    });
+  } catch (error: any) {
+    console.error("File parsing error:", error);
+    res.status(500).json({ error: error.message || "Failed to parse the file." });
   }
 });
 

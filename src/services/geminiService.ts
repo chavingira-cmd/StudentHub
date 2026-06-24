@@ -13,11 +13,15 @@ function getAI() {
   return aiInstance;
 }
 
-export async function generateStudyNotes(topic: string) {
+export async function generateStudyNotes(topic: string, documentContext?: string) {
   const ai = getAI();
+  let contents = `Generate comprehensive study notes for the topic: ${topic}. Include key concepts, definitions, and a summary. Format as Markdown.`;
+  if (documentContext) {
+    contents += `\n\nUse the following attached syllabus or study document as your primary reference and context source to compile these notes:\n\n[ATTACHED DOCUMENT]\n${documentContext}\n[END OF ATTACHED DOCUMENT]`;
+  }
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
-    contents: `Generate comprehensive study notes for the topic: ${topic}. Include key concepts, definitions, and a summary. Format as Markdown.`,
+    contents,
   });
   return response.text;
 }
