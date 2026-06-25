@@ -2,7 +2,7 @@ import express from "express";
 import Database from "better-sqlite3";
 import path from "path";
 import { fileURLToPath } from "url";
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -179,6 +179,137 @@ function getAI() {
   return aiInstance;
 }
 
+// Low-level helper to call OpenAI using standard fetch API
+async function callOpenAI(messages: any[], systemInstruction?: string, responseFormatJson?: boolean) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error("OPENAI_API_KEY is not configured.");
+  }
+
+  const openaiMessages: any[] = [];
+  if (systemInstruction) {
+    openaiMessages.push({ role: "system", content: systemInstruction });
+  }
+  openaiMessages.push(...messages);
+
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model: "gpt-4o-mini",
+      messages: openaiMessages,
+      response_format: responseFormatJson ? { type: "json_object" } : undefined,
+      temperature: 0.7,
+    })
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`OpenAI API error: ${response.status} ${errText}`);
+  }
+
+  const data = await response.json();
+  return data.choices?.[0]?.message?.content || "";
+}
+
+// Low-level helper to call Gemini using GoogleGenAI
+async function callGemini(messages: any[], systemInstruction?: string, jsonSchema?: any) {
+  const ai = getAI();
+  const geminiMessages = messages.map(m => ({
+    role: m.role === "assistant" || m.role === "system" ? "model" : "user",
+    parts: [{ text: m.content || m.text }]
+  }));
+
+  const config: any = {};
+  if (systemInstruction) {
+    config.systemInstruction = systemInstruction;
+  }
+  if (jsonSchema) {
+    config.responseMimeType = "application/json";
+    config.responseSchema = jsonSchema;
+  }
+
+  const response = await ai.models.generateContent({
+    model: "gemini-3.5-flash",
+    contents: geminiMessages,
+    config
+  });
+
+  return response.text;
+}
+
+// Unified high-level helper with fallback capabilities
+async function generateAIResponse({
+  messages,
+  systemInstruction,
+  jsonSchema,
+  useJsonForOpenAI = false,
+  openAiPromptEnhancement = ""
+}: {
+  messages: any[];
+  systemInstruction?: string;
+  jsonSchema?: any;
+  useJsonForOpenAI?: boolean;
+  openAiPromptEnhancement?: string;
+}) {
+  const hasOpenAI = !!process.env.OPENAI_API_KEY;
+  const hasGemini = !!process.env.GEMINI_API_KEY;
+
+  if (!hasOpenAI && !hasGemini) {
+    throw new Error("Neither OPENAI_API_KEY nor GEMINI_API_KEY is configured.");
+  }
+
+  // Define ordered list of models to try.
+  // Since the user requested using OPENAI_API_KEY to solve the high demand/unavailability (503) error with Gemini,
+  // we will try OpenAI first if it is available, and fall back to Gemini.
+  const attempts = [];
+  if (hasOpenAI) {
+    attempts.push({
+      name: "OpenAI",
+      fn: async () => {
+        const openaiMessages = messages.map(m => ({
+          role: m.role === "assistant" || m.role === "model" ? "assistant" : m.role === "system" ? "system" : "user",
+          content: m.content || m.text
+        }));
+        if (openAiPromptEnhancement) {
+          const lastMsg = openaiMessages[openaiMessages.length - 1];
+          if (lastMsg && lastMsg.role === "user") {
+            lastMsg.content += "\n\n" + openAiPromptEnhancement;
+          }
+        }
+        return await callOpenAI(openaiMessages, systemInstruction, useJsonForOpenAI);
+      }
+    });
+  }
+
+  attempts.push({
+    name: "Gemini",
+    fn: async () => {
+      return await callGemini(messages, systemInstruction, jsonSchema);
+    }
+  });
+
+  let lastError: any = null;
+  for (const attempt of attempts) {
+    try {
+      console.log(`[AI] Attempting generation with ${attempt.name}...`);
+      const result = await attempt.fn();
+      if (result) {
+        console.log(`[AI] Success with ${attempt.name}!`);
+        return result;
+      }
+    } catch (err: any) {
+      console.error(`[AI] ${attempt.name} generation failed:`, err.message || err);
+      lastError = err;
+    }
+  }
+
+  throw lastError || new Error("AI generation failed with all available models.");
+}
+
 app.post("/api/chatbot", async (req, res) => {
   const { messages } = req.body;
   
@@ -187,22 +318,101 @@ app.post("/api/chatbot", async (req, res) => {
   }
 
   try {
-    const ai = getAI();
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: messages.map(m => ({
-        role: m.role === "assistant" ? "model" : m.role,
-        parts: [{ text: m.text || m.content }]
+    const systemInstruction = "You are 'StudenthubAI', the friendly AI Study Tutor for StudentHub, aligned with the Zimbabwe Heritage-Based Curriculum (2024-2030). Your goal is to make learning easy, engaging, and extremely accessible for students. Since students can sometimes find long texts overwhelming, you must: 1. Explain complex academic concepts in simple, digestible, and friendly language. 2. Use bullet points, bold text, and brief summaries to break up information. 3. Be friendly and encourage the Ubuntu principle ('Hunhu/Unhu') and cultural pride. 4. Offer to quiz them, build fun study rhymes/songs, or explain processes using analogies matching local Zimbabwean contexts (e.g. comparing database indexing to sorting bags of grain or comparing CPU cache to quick-access tools at a domestic forge). Focus on being extremely clear so they don't have to read massive textbooks! Keep your answers relatively concise, highly engaging, and formatted beautifully in Markdown.";
+
+    const text = await generateAIResponse({
+      messages: messages.map(m => ({
+        role: m.role === "assistant" ? "assistant" : "user",
+        content: m.text || m.content
       })),
-      config: {
-        systemInstruction: "You are 'StudenthubAI', the friendly AI Study Tutor for StudentHub, aligned with the Zimbabwe Heritage-Based Curriculum (2024-2030). Your goal is to make learning easy, engaging, and extremely accessible for students. Since students can sometimes find long texts overwhelming, you must: 1. Explain complex academic concepts in simple, digestible, and friendly language. 2. Use bullet points, bold text, and brief summaries to break up information. 3. Be friendly and encourage the Ubuntu principle ('Hunhu/Unhu') and cultural pride. 4. Offer to quiz them, build fun study rhymes/songs, or explain processes using analogies matching local Zimbabwean contexts (e.g. comparing database indexing to sorting bags of grain or comparing CPU cache to quick-access tools at a domestic forge). Focus on being extremely clear so they don't have to read massive textbooks! Keep your answers relatively concise, highly engaging, and formatted beautifully in Markdown."
-      }
+      systemInstruction
     });
 
-    res.json({ text: response.text });
+    res.json({ text });
   } catch (error: any) {
     console.error("Chatbot error:", error);
     res.status(500).json({ error: error.message || "Failed to generate AI response" });
+  }
+});
+
+app.post("/api/generate-notes", async (req, res) => {
+  const { topic } = req.body;
+  if (!topic) {
+    return res.status(400).json({ error: "Topic is required" });
+  }
+
+  try {
+    const systemInstruction = "You are an expert curriculum planner and study assistant, highly knowledgeable about the Zimbabwe Heritage-Based Curriculum.";
+    const notesText = await generateAIResponse({
+      messages: [
+        {
+          role: "user",
+          content: `Generate comprehensive study notes for the topic: ${topic}. Include key concepts, definitions, and a summary. Format as Markdown.`
+        }
+      ],
+      systemInstruction
+    });
+
+    res.json({ text: notesText });
+  } catch (error: any) {
+    console.error("Generate notes error:", error);
+    res.status(500).json({ error: error.message || "Failed to generate study notes" });
+  }
+});
+
+app.post("/api/generate-flashcards", async (req, res) => {
+  const { topic, count = 5 } = req.body;
+  if (!topic) {
+    return res.status(400).json({ error: "Topic is required" });
+  }
+
+  try {
+    const rawResult = await generateAIResponse({
+      messages: [
+        {
+          role: "user",
+          content: `Generate ${count} flashcards for the topic: ${topic}. Each flashcard should have a question and an answer.`
+        }
+      ],
+      jsonSchema: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            question: { type: Type.STRING },
+            answer: { type: Type.STRING },
+          },
+          required: ["question", "answer"],
+        },
+      },
+      useJsonForOpenAI: true,
+      openAiPromptEnhancement: `Return a JSON object with a single key "flashcards", containing an array of ${count} objects. Each object must have "question" and "answer" properties. Example: { "flashcards": [ { "question": "What is 1+1?", "answer": "2" } ] }`
+    });
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(rawResult);
+    } catch (e) {
+      const cleaned = rawResult.replace(/```json/g, "").replace(/```/g, "").trim();
+      parsed = JSON.parse(cleaned);
+    }
+
+    let flashcardsArray: any[] = [];
+    if (Array.isArray(parsed)) {
+      flashcardsArray = parsed;
+    } else if (parsed && Array.isArray(parsed.flashcards)) {
+      flashcardsArray = parsed.flashcards;
+    } else if (parsed && typeof parsed === "object") {
+      const arrayKey = Object.keys(parsed).find(k => Array.isArray(parsed[k]));
+      if (arrayKey) {
+        flashcardsArray = parsed[arrayKey];
+      }
+    }
+
+    res.json(flashcardsArray);
+  } catch (error: any) {
+    console.error("Generate flashcards error:", error);
+    res.status(500).json({ error: error.message || "Failed to generate flashcards" });
   }
 });
 
