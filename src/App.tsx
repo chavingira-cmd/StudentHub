@@ -24,10 +24,7 @@ import {
   Bot,
   Send,
   MessageSquare,
-  Telescope,
-  Paperclip,
-  Trash2,
-  File
+  Telescope
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import Markdown from 'react-markdown';
@@ -389,49 +386,12 @@ const Notes = () => {
   const [topic, setTopic] = useState('');
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
-  const [attachedFile, setAttachedFile] = useState<{ filename: string; text: string; size: number } | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState('');
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setUploading(true);
-    setUploadError('');
-
-    const formData = new FormData();
-    formData.append('file', file);
-
-    try {
-      const res = await fetch('/api/parse-file', {
-        method: 'POST',
-        body: formData,
-      });
-
-      const data = await res.json();
-      if (res.ok) {
-        setAttachedFile({
-          filename: data.filename,
-          text: data.text,
-          size: data.size,
-        });
-      } else {
-        setUploadError(data.error || 'Failed to parse file.');
-      }
-    } catch (err) {
-      console.error(err);
-      setUploadError('An error occurred during file upload.');
-    } finally {
-      setUploading(false);
-    }
-  };
 
   const handleGenerate = async () => {
     if (!topic) return;
     setLoading(true);
     try {
-      const result = await generateStudyNotes(topic, attachedFile?.text);
+      const result = await generateStudyNotes(topic);
       setNotes(result || '');
     } catch (err) {
       console.error(err);
@@ -447,61 +407,6 @@ const Notes = () => {
         <p className="text-slate-500 dark:text-slate-400">Enter a topic and let AI compile study notes for you.</p>
       </header>
 
-      {/* File Upload Section */}
-      <div className="bg-slate-50 dark:bg-slate-900/50 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="font-bold text-slate-800 dark:text-slate-200 text-sm flex items-center gap-1.5">
-              <Paperclip size={16} className="text-blue-500" />
-              Supporting Document (Optional)
-            </h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Attach a syllabus, assignment brief, or lesson plan. Notes will be customized to align with this document.
-            </p>
-          </div>
-          {!attachedFile && !uploading && (
-            <label className="bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 px-4 py-2 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-700 cursor-pointer shadow-xs transition-colors flex items-center gap-1.5">
-              <Paperclip size={14} className="rotate-45" />
-              Choose File
-              <input type="file" accept=".pdf,.txt,.md,.csv,.json" onChange={handleFileUpload} className="hidden" />
-            </label>
-          )}
-        </div>
-
-        {uploading && (
-          <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-800/40 p-3 rounded-xl border border-slate-100 dark:border-slate-800 animate-pulse">
-            <Loader2 className="animate-spin text-blue-500" size={14} />
-            Parsing document contents... Please wait.
-          </div>
-        )}
-
-        {uploadError && (
-          <div className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/20 p-3 rounded-xl border border-red-100 dark:border-red-900/45 flex items-center justify-between">
-            <span>{uploadError}</span>
-            <button onClick={() => setUploadError('')} className="text-red-500 hover:text-red-700 font-bold ml-2">Clear</button>
-          </div>
-        )}
-
-        {attachedFile && (
-          <div className="flex items-center justify-between bg-emerald-50/50 dark:bg-emerald-950/20 p-3 rounded-xl border border-emerald-100 dark:border-emerald-900/45 text-emerald-800 dark:text-emerald-400 text-xs">
-            <div className="flex items-center gap-2 min-w-0">
-              <File size={16} className="text-emerald-500 shrink-0" />
-              <span className="font-medium truncate">{attachedFile.filename}</span>
-              <span className="text-slate-400 dark:text-slate-500 font-mono text-[10px]">
-                ({(attachedFile.size / 1024).toFixed(1)} KB)
-              </span>
-            </div>
-            <button
-              onClick={() => setAttachedFile(null)}
-              className="text-slate-400 hover:text-red-500 p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
-              title="Remove document"
-            >
-              <Trash2 size={14} />
-            </button>
-          </div>
-        )}
-      </div>
-
       <div className="flex gap-3">
         <input
           type="text"
@@ -513,7 +418,7 @@ const Notes = () => {
         <button
           onClick={handleGenerate}
           disabled={loading || !topic}
-          className="bg-blue-600 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-blue-700 transition-colors disabled:opacity-50 cursor-pointer"
+          className="bg-blue-600 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-blue-700 transition-colors disabled:opacity-50"
         >
           {loading ? <Loader2 className="animate-spin" size={20} /> : <Sparkles size={20} />}
           Generate
@@ -810,28 +715,20 @@ const Planner = ({ user }: { user: User }) => {
 const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email.trim()) return;
     setLoading(true);
-    setError('');
     try {
       const res = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email.trim() })
+        body: JSON.stringify({ email })
       });
-      const data = await res.json();
-      if (res.ok && !data.error) {
-        onLogin(data);
-      } else {
-        setError(data.error || 'Failed to authenticate. Please try again.');
-      }
-    } catch (err: any) {
+      const user = await res.json();
+      onLogin(user);
+    } catch (err) {
       console.error(err);
-      setError(`A network error occurred: ${err?.message || err}. Please check your connection.`);
     } finally {
       setLoading(false);
     }
@@ -857,19 +754,6 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
           <p className="text-slate-500 dark:text-slate-400 mt-2">Your gateway to the Zimbabwe Heritage-Based Curriculum (2024-2030).</p>
         </div>
 
-        {error && (
-          <motion.div 
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="mb-5 p-4 rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-100 dark:border-red-900/40 text-red-600 dark:text-red-400 text-xs flex items-start gap-2"
-          >
-            <div className="flex-1 leading-relaxed">{error}</div>
-            <button onClick={() => setError('')} className="text-red-400 hover:text-red-600 dark:hover:text-red-300 cursor-pointer">
-              <X size={14} />
-            </button>
-          </motion.div>
-        )}
-
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-1">Email Address</label>
@@ -879,18 +763,15 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
               placeholder="you@student.com"
               className="w-full px-4 py-3 bg-blue-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white transition-colors"
               value={email}
-              onChange={(e) => {
-                setEmail(e.target.value);
-                if (error) setError('');
-              }}
+              onChange={(e) => setEmail(e.target.value)}
             />
           </div>
           <button
             type="submit"
-            disabled={loading || !email.trim()}
-            className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
+            disabled={loading || !email}
+            className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
           >
-            {loading ? <Loader2 className="animate-spin" size={20} /> : null}
+            {loading && <Loader2 className="animate-spin" size={20} />}
             Continue
           </button>
         </form>
@@ -912,9 +793,6 @@ const TutorChatbot = () => {
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [attachedFile, setAttachedFile] = useState<{ filename: string; text: string; size: number } | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState('');
   const chatEndRef = React.useRef<HTMLDivElement>(null);
 
   const quickPrompts = [
@@ -927,40 +805,6 @@ const TutorChatbot = () => {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setUploading(true);
-    setUploadError('');
-
-    const formData = new FormData();
-    formData.append('file', file);
-
-    try {
-      const res = await fetch('/api/parse-file', {
-        method: 'POST',
-        body: formData,
-      });
-
-      const data = await res.json();
-      if (res.ok) {
-        setAttachedFile({
-          filename: data.filename,
-          text: data.text,
-          size: data.size,
-        });
-      } else {
-        setUploadError(data.error || 'Failed to parse file.');
-      }
-    } catch (err) {
-      console.error(err);
-      setUploadError('An error occurred during file upload.');
-    } finally {
-      setUploading(false);
-    }
-  };
 
   const handleSendMessage = async (textToSend: string) => {
     if (!textToSend.trim() || loading) return;
@@ -975,8 +819,7 @@ const TutorChatbot = () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          messages: [...messages, userMessage],
-          documentContext: attachedFile?.text
+          messages: [...messages, userMessage] 
         })
       });
       const data = await res.json();
@@ -1015,49 +858,6 @@ const TutorChatbot = () => {
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Left Side Info / Quick Chips */}
         <div className="lg:col-span-1 space-y-4">
-          {/* File Attachment Card */}
-          <div className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-4 animate-fadeIn">
-            <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
-              <Paperclip size={16} className="text-blue-500" /> Attached Context
-            </h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-              Upload a syllabus, textbook chapter, or course outline. StudenthubAI will search and answer directly using the attached content!
-            </p>
-            {!attachedFile && !uploading && (
-              <label className="w-full bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-750 text-slate-700 dark:text-slate-300 py-3.5 px-4 rounded-2xl text-xs font-bold border border-slate-200 dark:border-slate-700 cursor-pointer transition-all flex items-center justify-center gap-2">
-                <Paperclip size={14} className="rotate-45" />
-                Attach Document
-                <input type="file" accept=".pdf,.txt,.md,.csv,.json" onChange={handleFileUpload} className="hidden" />
-              </label>
-            )}
-            {uploading && (
-              <div className="flex items-center justify-center gap-2 text-xs text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/40 p-3 rounded-2xl border border-slate-200 dark:border-slate-800 animate-pulse">
-                <Loader2 className="animate-spin text-blue-500" size={14} />
-                Parsing document...
-              </div>
-            )}
-            {uploadError && (
-              <div className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/20 p-3 rounded-2xl border border-red-100 dark:border-red-900/45 flex flex-col gap-1.5">
-                <span>{uploadError}</span>
-                <button onClick={() => setUploadError('')} className="text-red-500 hover:text-red-700 font-bold text-left text-[10px]">Clear</button>
-              </div>
-            )}
-            {attachedFile && (
-              <div className="flex flex-col gap-2 bg-emerald-50/50 dark:bg-emerald-950/10 p-3.5 rounded-2xl border border-emerald-100 dark:border-emerald-900/45 text-emerald-800 dark:text-emerald-400 text-xs">
-                <div className="flex items-center gap-2 min-w-0">
-                  <File size={16} className="text-emerald-500 shrink-0" />
-                  <span className="font-bold truncate flex-1">{attachedFile.filename}</span>
-                </div>
-                <div className="flex justify-between items-center text-[10px] text-slate-400 dark:text-slate-500 font-medium">
-                  <span>{(attachedFile.size / 1024).toFixed(1)} KB parsed</span>
-                  <button onClick={() => setAttachedFile(null)} className="text-red-500 hover:text-red-700 font-bold transition-colors cursor-pointer">
-                    Remove
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-
           <div className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-4 animate-fadeIn">
             <h3 className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
               <Sparkles size={16} className="text-blue-500" /> Quick Revision
@@ -1136,35 +936,22 @@ const TutorChatbot = () => {
           </div>
 
           {/* Form */}
-          <form onSubmit={handleSubmit} className="p-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900 flex flex-col gap-2">
-            {attachedFile && (
-              <div className="flex items-center justify-between bg-emerald-50/60 dark:bg-emerald-950/20 px-3 py-1.5 rounded-xl border border-emerald-100 dark:border-emerald-900/40 text-emerald-800 dark:text-emerald-400 text-xs mb-1">
-                <div className="flex items-center gap-2 min-w-0">
-                  <File size={14} className="text-emerald-500 shrink-0" />
-                  <span className="truncate font-medium">Using context from: {attachedFile.filename}</span>
-                </div>
-                <button type="button" onClick={() => setAttachedFile(null)} className="text-slate-400 hover:text-red-500 cursor-pointer">
-                  <X size={14} />
-                </button>
-              </div>
-            )}
-            <div className="flex gap-2">
-              <input
-                type="text"
-                placeholder={attachedFile ? "Search or ask anything from the attached document..." : "Ask StudenthubAI to summarize, explain, or test you..."}
-                className="flex-1 px-4 py-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white text-sm"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                disabled={loading}
-              />
-              <button
-                type="submit"
-                disabled={loading || !input.trim()}
-                className="bg-blue-600 text-white p-3 rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center justify-center shrink-0 group cursor-pointer"
-              >
-                <Send size={18} className="group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
-              </button>
-            </div>
+          <form onSubmit={handleSubmit} className="p-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900 flex gap-2">
+            <input
+              type="text"
+              placeholder="Ask StudenthubAI to summarize, explain, or test you..."
+              className="flex-1 px-4 py-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white text-sm"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              disabled={loading}
+            />
+            <button
+              type="submit"
+              disabled={loading || !input.trim()}
+              className="bg-blue-600 text-white p-3 rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center justify-center shrink-0 group cursor-pointer"
+            >
+              <Send size={18} className="group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+            </button>
           </form>
         </div>
       </div>
