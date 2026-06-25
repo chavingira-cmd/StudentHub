@@ -1,169 +1,330 @@
 import express from "express";
-import Database from "better-sqlite3";
 import path from "path";
 import { fileURLToPath } from "url";
 import { GoogleGenAI } from "@google/genai";
 import OpenAI from "openai";
 import multer from "multer";
-// @ts-ignore
-import pdf from "pdf-parse";
+import { createRequire } from "module";
+
+const require = createRequire(import.meta.url);
+const pdf = require("pdf-parse");
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Use /tmp for SQLite in serverless environments if needed, 
-// but for now we'll stick to the local file for dev compatibility.
-const dbPath = process.env.NODE_ENV === 'production' ? '/tmp/studenthub.db' : 'studenthub.db';
-const db = new Database(dbPath);
+// Dynamic/robust database initialization helper
+let dbInstance: any = null;
+let isInMemoryFallback = false;
 
-// Initialize Database
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE,
-    email TEXT UNIQUE,
-    password TEXT
-  );
+// Global state for in-memory fallback
+const inMemoryTables: Record<string, any[]> = {
+  users: [],
+  resources: [],
+  flashcards: [],
+  planner: [],
+  favorites: []
+};
+let lastInsertId = 1000;
 
-  CREATE TABLE IF NOT EXISTS resources (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    title TEXT,
-    type TEXT,
-    subject TEXT,
-    topic TEXT,
-    content TEXT,
-    author TEXT,
-    url TEXT
-  );
+async function getDB() {
+  if (dbInstance) return dbInstance;
 
-  CREATE TABLE IF NOT EXISTS flashcards (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    subject TEXT,
-    question TEXT,
-    answer TEXT,
-    FOREIGN KEY(user_id) REFERENCES users(id)
-  );
+  try {
+    const Database = require("better-sqlite3");
+    const dbPath = process.env.NODE_ENV === 'production' ? '/tmp/studenthub.db' : 'studenthub.db';
+    dbInstance = new Database(dbPath);
+    console.log(`Connected to SQLite database at ${dbPath}`);
+    
+    // Initialize Database Schema if using standard SQLite
+    dbInstance.exec(`
+      CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE,
+        email TEXT UNIQUE,
+        password TEXT
+      );
 
-  CREATE TABLE IF NOT EXISTS planner (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    title TEXT,
-    date TEXT,
-    completed INTEGER DEFAULT 0,
-    FOREIGN KEY(user_id) REFERENCES users(id)
-  );
+      CREATE TABLE IF NOT EXISTS resources (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT,
+        type TEXT,
+        subject TEXT,
+        topic TEXT,
+        content TEXT,
+        author TEXT,
+        url TEXT
+      );
 
-  CREATE TABLE IF NOT EXISTS favorites (
-    user_id INTEGER,
-    resource_id INTEGER,
-    PRIMARY KEY(user_id, resource_id),
-    FOREIGN KEY(user_id) REFERENCES users(id),
-    FOREIGN KEY(resource_id) REFERENCES resources(id)
-  );
-`);
+      CREATE TABLE IF NOT EXISTS flashcards (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        subject TEXT,
+        question TEXT,
+        answer TEXT,
+        FOREIGN KEY(user_id) REFERENCES users(id)
+      );
 
-// Seed initial data
-const resourceCount = db.prepare("SELECT COUNT(*) as count FROM resources").get() as { count: number };
-if (resourceCount.count === 0) {
-  const insertResource = db.prepare("INSERT INTO resources (title, type, subject, topic, content, author) VALUES (?, ?, ?, ?, ?, ?)");
-  
-  // Core Areas & Compulsory Subjects
-  insertResource.run("Heritage Studies Grade 7", "book", "Heritage Studies", "National Values", "Exploring Zimbabwean history and Ubuntu principles.", "Ministry of Education");
-  insertResource.run("Mathematics Form 1", "book", "Mathematics", "Algebra", "Foundational algebra for secondary students.", "ZIMSEC");
-  insertResource.run("Combined Science Notes", "note", "Combined Science", "Biology", "Summary of biological systems for O-Level.", "StudyHub");
-  insertResource.run("English Language Guide", "book", "English", "Composition", "Improving creative writing and grammar.", "Oxford Press");
-  insertResource.run("Shona Literature", "book", "Indigenous Languages", "Poetry", "Analysis of modern Shona poetry.", "ZPH");
+      CREATE TABLE IF NOT EXISTS planner (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        title TEXT,
+        date TEXT,
+        completed INTEGER DEFAULT 0,
+        FOREIGN KEY(user_id) REFERENCES users(id)
+      );
 
-  // STEM Pathway
-  insertResource.run("Software Engineering Basics", "note", "Software Engineering", "SDLC", "Introduction to the Software Development Life Cycle.", "Dev Academy");
-  insertResource.run("Computer Science: Python", "book", "Computer Science", "Programming", "Learning Python for A-Level Computer Science.", "TechBooks");
-  insertResource.run("Physics: Mechanics", "note", "Physics", "Forces", "Notes on Newton's laws and motion.", "Science Pro");
-  insertResource.run("Biology: Genetics", "book", "Biology", "DNA", "Comprehensive guide to genetic engineering.", "BioWorld");
+      CREATE TABLE IF NOT EXISTS favorites (
+        user_id INTEGER,
+        resource_id INTEGER,
+        PRIMARY KEY(user_id, resource_id),
+        FOREIGN KEY(user_id) REFERENCES users(id),
+        FOREIGN KEY(resource_id) REFERENCES resources(id)
+      );
+    `);
+  } catch (e) {
+    console.warn("Failed to load native better-sqlite3 module. Initializing robust in-memory database fallback:", e);
+    isInMemoryFallback = true;
+    
+    dbInstance = {
+      exec(sql: string) {
+        // Schema initialized dynamically in memory
+      },
+      prepare(sql: string) {
+        const sqlLower = sql.toLowerCase().trim().replace(/\s+/g, ' ');
 
-  // Humanities & Commercials
-  insertResource.run("Geography of Zimbabwe", "book", "Geography", "Physical Geography", "Study of Zimbabwe's landforms and climate.", "GeoPress");
-  insertResource.run("Economics: Macroeconomics", "note", "Economics", "GDP", "Understanding national income and growth.", "Finance Hub");
-  insertResource.run("Business Enterprise", "book", "Business Enterprise", "Entrepreneurship", "Starting and managing a business in Zimbabwe.", "SME Connect");
-  insertResource.run("Principles of Accounts", "note", "Principles of Accounts", "Ledgers", "Basic accounting principles and bookkeeping.", "Accountant Pro");
+        return {
+          get(...params: any[]) {
+            // SELECT COUNT(*) as count FROM resources
+            if (sqlLower.includes("select count(*)")) {
+              return { count: inMemoryTables.resources.length };
+            }
+            // SELECT * FROM users WHERE email = ?
+            if (sqlLower.includes("select * from users where email =")) {
+              const email = params[0]?.toLowerCase().trim();
+              return inMemoryTables.users.find(u => u.email.toLowerCase().trim() === email) || null;
+            }
+            // SELECT * FROM users WHERE username = ?
+            if (sqlLower.includes("select * from users where username =")) {
+              const username = params[0]?.toLowerCase().trim();
+              return inMemoryTables.users.find(u => u.username.toLowerCase().trim() === username) || null;
+            }
+            return null;
+          },
+          all(...params: any[]) {
+            // SELECT DISTINCT subject FROM resources
+            if (sqlLower.includes("select distinct subject from resources")) {
+              const subjects = [...new Set(inMemoryTables.resources.map(r => r.subject))];
+              return subjects.map(s => ({ subject: s }));
+            }
+            // SELECT * FROM resources
+            if (sqlLower.includes("from resources")) {
+              return inMemoryTables.resources;
+            }
+            // SELECT * FROM flashcards WHERE user_id = ?
+            if (sqlLower.includes("from flashcards where user_id =")) {
+              const userId = Number(params[0]);
+              return inMemoryTables.flashcards.filter(c => Number(c.user_id) === userId);
+            }
+            // SELECT * FROM planner WHERE user_id = ?
+            if (sqlLower.includes("from planner where user_id =")) {
+              const userId = Number(params[0]);
+              return inMemoryTables.planner.filter(t => Number(t.user_id) === userId);
+            }
+            return [];
+          },
+          run(...params: any[]) {
+            lastInsertId++;
 
-  // Technical & Vocational
-  insertResource.run("Agriculture: Crop Science", "book", "Agriculture", "Maize Production", "Best practices for maize farming in Zimbabwe.", "AgriZim");
-  insertResource.run("Wood Technology Projects", "note", "Wood Technology", "Joinery", "Guide to basic woodworking joints.", "Craftsman");
-  insertResource.run("Food Technology", "book", "Food Technology", "Nutrition", "Study of food processing and preservation.", "Home Science");
+            // INSERT INTO resources
+            if (sqlLower.includes("insert into resources")) {
+              const [title, type, subject, topic, content, author] = params;
+              inMemoryTables.resources.push({ id: lastInsertId, title, type, subject, topic, content, author });
+            }
+            // INSERT INTO flashcards
+            else if (sqlLower.includes("insert into flashcards")) {
+              const [userId, subject, question, answer] = params;
+              inMemoryTables.flashcards.push({ id: lastInsertId, user_id: userId, subject, question, answer });
+            }
+            // INSERT INTO planner
+            else if (sqlLower.includes("insert into planner")) {
+              const [userId, title, date] = params;
+              inMemoryTables.planner.push({ id: lastInsertId, user_id: userId, title, date, completed: 0 });
+            }
+            // INSERT INTO users
+            else if (sqlLower.includes("insert into users")) {
+              const [email, username] = params;
+              inMemoryTables.users.push({ id: lastInsertId, email, username });
+            }
+            // UPDATE planner SET completed = ? WHERE id = ?
+            else if (sqlLower.includes("update planner set completed")) {
+              const [completed, id] = params;
+              const task = inMemoryTables.planner.find(t => t.id === Number(id));
+              if (task) {
+                task.completed = completed ? 1 : 0;
+              }
+            }
 
-  // Arts & Physical Education
-  insertResource.run("Visual Arts: Shona Sculpture", "book", "Visual Arts", "Sculpture", "History and techniques of stone carving.", "Art Gallery");
-  insertResource.run("Theatre Arts: Performance", "note", "Theatre Arts", "Acting", "Techniques for stage performance and drama.", "Drama Club");
-  insertResource.run("Physical Education: Athletics", "note", "Physical Education", "Track & Field", "Training guide for competitive athletics.", "Sports Academy");
+            return { lastInsertRowid: lastInsertId };
+          }
+        };
+      }
+    };
+  }
+
+  // Seed initial data if database has no resources
+  const getResourceCount = () => {
+    try {
+      const resourceCount = dbInstance.prepare("SELECT COUNT(*) as count FROM resources").get() as { count: number };
+      return resourceCount ? resourceCount.count : 0;
+    } catch (err) {
+      return 0;
+    }
+  };
+
+  if (getResourceCount() === 0) {
+    const insertResource = dbInstance.prepare("INSERT INTO resources (title, type, subject, topic, content, author) VALUES (?, ?, ?, ?, ?, ?)");
+    
+    const seedData = [
+      // Core Areas & Compulsory Subjects
+      ["Heritage Studies Grade 7", "book", "Heritage Studies", "National Values", "Exploring Zimbabwean history and Ubuntu principles.", "Ministry of Education"],
+      ["Mathematics Form 1", "book", "Mathematics", "Algebra", "Foundational algebra for secondary students.", "ZIMSEC"],
+      ["Combined Science Notes", "note", "Combined Science", "Biology", "Summary of biological systems for O-Level.", "StudyHub"],
+      ["English Language Guide", "book", "English", "Composition", "Improving creative writing and grammar.", "Oxford Press"],
+      ["Shona Literature", "book", "Indigenous Languages", "Poetry", "Analysis of modern Shona poetry.", "ZPH"],
+
+      // STEM Pathway
+      ["Software Engineering Basics", "note", "Software Engineering", "SDLC", "Introduction to the Software Development Life Cycle.", "Dev Academy"],
+      ["Computer Science: Python", "book", "Computer Science", "Programming", "Learning Python for A-Level Computer Science.", "TechBooks"],
+      ["Physics: Mechanics", "note", "Physics", "Forces", "Notes on Newton's laws and motion.", "Science Pro"],
+      ["Biology: Genetics", "book", "Biology", "DNA", "Comprehensive guide to genetic engineering.", "BioWorld"],
+
+      // Humanities & Commercials
+      ["Geography of Zimbabwe", "book", "Geography", "Physical Geography", "Study of Zimbabwe's landforms and climate.", "GeoPress"],
+      ["Economics: Macroeconomics", "note", "Economics", "GDP", "Understanding national income and growth.", "Finance Hub"],
+      ["Business Enterprise", "book", "Business Enterprise", "Entrepreneurship", "Starting and managing a business in Zimbabwe.", "SME Connect"],
+      ["Principles of Accounts", "note", "Principles of Accounts", "Ledgers", "Basic accounting principles and bookkeeping.", "Accountant Pro"],
+
+      // Technical & Vocational
+      ["Agriculture: Crop Science", "book", "Agriculture", "Maize Production", "Best practices for maize farming in Zimbabwe.", "AgriZim"],
+      ["Wood Technology Projects", "note", "Wood Technology", "Joinery", "Guide to basic woodworking joints.", "Craftsman"],
+      ["Food Technology", "book", "Food Technology", "Nutrition", "Study of food processing and preservation.", "Home Science"],
+
+      // Arts & Physical Education
+      ["Visual Arts: Shona Sculpture", "book", "Visual Arts", "Sculpture", "History and techniques of stone carving.", "Art Gallery"],
+      ["Theatre Arts: Performance", "note", "Theatre Arts", "Acting", "Techniques for stage performance and drama.", "Drama Club"],
+      ["Physical Education: Athletics", "note", "Physical Education", "Track & Field", "Training guide for competitive athletics.", "Sports Academy"]
+    ];
+
+    for (const row of seedData) {
+      insertResource.run(...row);
+    }
+  }
+
+  return dbInstance;
 }
 
 const app = express();
 app.use(express.json());
 
 // API Routes
-app.get("/api/resources", (req, res) => {
-  const { q, type, subject } = req.query;
-  let query = "SELECT * FROM resources WHERE 1=1";
-  const params = [];
+app.get("/api/resources", async (req, res) => {
+  try {
+    const db = await getDB();
+    const { q, type, subject } = req.query;
+    let query = "SELECT * FROM resources WHERE 1=1";
+    const params = [];
 
-  if (q) {
-    query += " AND (title LIKE ? OR topic LIKE ? OR subject LIKE ?)";
-    params.push(`%${q}%`, `%${q}%`, `%${q}%`);
+    if (q) {
+      query += " AND (title LIKE ? OR topic LIKE ? OR subject LIKE ?)";
+      params.push(`%${q}%`, `%${q}%`, `%${q}%`);
+    }
+    if (type) {
+      query += " AND type = ?";
+      params.push(type);
+    }
+    if (subject) {
+      query += " AND subject = ?";
+      params.push(subject);
+    }
+
+    const resources = db.prepare(query).all(...params);
+    res.json(resources);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
   }
-  if (type) {
-    query += " AND type = ?";
-    params.push(type);
+});
+
+app.get("/api/subjects", async (req, res) => {
+  try {
+    const db = await getDB();
+    const subjects = db.prepare("SELECT DISTINCT subject FROM resources").all();
+    res.json(subjects.map((s: any) => s.subject));
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
   }
-  if (subject) {
-    query += " AND subject = ?";
-    params.push(subject);
+});
+
+app.get("/api/flashcards/:userId", async (req, res) => {
+  try {
+    const db = await getDB();
+    const cards = db.prepare("SELECT * FROM flashcards WHERE user_id = ?").all(req.params.userId);
+    res.json(cards);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
   }
-
-  const resources = db.prepare(query).all(...params);
-  res.json(resources);
 });
 
-app.get("/api/subjects", (req, res) => {
-  const subjects = db.prepare("SELECT DISTINCT subject FROM resources").all();
-  res.json(subjects.map((s: any) => s.subject));
+app.post("/api/flashcards", async (req, res) => {
+  try {
+    const db = await getDB();
+    const { userId, subject, question, answer } = req.body;
+    const info = db.prepare("INSERT INTO flashcards (user_id, subject, question, answer) VALUES (?, ?, ?, ?)").run(userId, subject, question, answer);
+    res.json({ id: info.lastInsertRowid });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
-app.get("/api/flashcards/:userId", (req, res) => {
-  const cards = db.prepare("SELECT * FROM flashcards WHERE user_id = ?").all(req.params.userId);
-  res.json(cards);
+app.get("/api/planner/:userId", async (req, res) => {
+  try {
+    const db = await getDB();
+    const tasks = db.prepare("SELECT * FROM planner WHERE user_id = ? ORDER BY date ASC").all(req.params.userId);
+    res.json(tasks);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
-app.post("/api/flashcards", (req, res) => {
-  const { userId, subject, question, answer } = req.body;
-  const info = db.prepare("INSERT INTO flashcards (user_id, subject, question, answer) VALUES (?, ?, ?, ?)").run(userId, subject, question, answer);
-  res.json({ id: info.lastInsertRowid });
+app.post("/api/planner", async (req, res) => {
+  try {
+    const db = await getDB();
+    const { userId, title, date } = req.body;
+    const info = db.prepare("INSERT INTO planner (user_id, title, date) VALUES (?, ?, ?)").run(userId, title, date);
+    res.json({ id: info.lastInsertRowid });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
-app.get("/api/planner/:userId", (req, res) => {
-  const tasks = db.prepare("SELECT * FROM planner WHERE user_id = ? ORDER BY date ASC").all(req.params.userId);
-  res.json(tasks);
+app.patch("/api/planner/:id", async (req, res) => {
+  try {
+    const db = await getDB();
+    const { completed } = req.body;
+    db.prepare("UPDATE planner SET completed = ? WHERE id = ?").run(completed ? 1 : 0, req.params.id);
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
-app.post("/api/planner", (req, res) => {
-  const { userId, title, date } = req.body;
-  const info = db.prepare("INSERT INTO planner (user_id, title, date) VALUES (?, ?, ?)").run(userId, title, date);
-  res.json({ id: info.lastInsertRowid });
-});
-
-app.patch("/api/planner/:id", (req, res) => {
-  const { completed } = req.body;
-  db.prepare("UPDATE planner SET completed = ? WHERE id = ?").run(completed ? 1 : 0, req.params.id);
-  res.json({ success: true });
-});
-
-app.post("/api/login", (req, res) => {
+app.post("/api/login", async (req, res) => {
   const { email } = req.body;
   if (!email || typeof email !== "string" || !email.includes("@")) {
     return res.status(400).json({ error: "Please enter a valid email address." });
   }
 
   try {
+    const db = await getDB();
     const trimmedEmail = email.trim();
     let user = db.prepare("SELECT * FROM users WHERE email = ?").get(trimmedEmail) as any;
     
