@@ -158,12 +158,38 @@ app.patch("/api/planner/:id", (req, res) => {
 
 app.post("/api/login", (req, res) => {
   const { email } = req.body;
-  let user = db.prepare("SELECT * FROM users WHERE email = ?").get(email) as any;
-  if (!user) {
-    const info = db.prepare("INSERT INTO users (email, username) VALUES (?, ?)").run(email, email.split('@')[0]);
-    user = { id: info.lastInsertRowid, email, username: email.split('@')[0] };
+  if (!email || typeof email !== "string" || !email.includes("@")) {
+    return res.status(400).json({ error: "Please enter a valid email address." });
   }
-  res.json(user);
+
+  try {
+    const trimmedEmail = email.trim();
+    let user = db.prepare("SELECT * FROM users WHERE email = ?").get(trimmedEmail) as any;
+    
+    if (!user) {
+      let username = trimmedEmail.split("@")[0].replace(/[^a-zA-Z0-9_]/g, "");
+      if (!username) {
+        username = "student";
+      }
+
+      // Ensure username is unique to satisfy UNIQUE constraint
+      let existing = db.prepare("SELECT * FROM users WHERE username = ?").get(username);
+      let count = 1;
+      const originalUsername = username;
+      while (existing) {
+        username = `${originalUsername}${count}`;
+        existing = db.prepare("SELECT * FROM users WHERE username = ?").get(username);
+        count++;
+      }
+
+      const info = db.prepare("INSERT INTO users (email, username) VALUES (?, ?)").run(trimmedEmail, username);
+      user = { id: info.lastInsertRowid, email: trimmedEmail, username };
+    }
+    res.json(user);
+  } catch (error: any) {
+    console.error("Login error:", error);
+    res.status(500).json({ error: error.message || "Failed to log in." });
+  }
 });
 
 let aiInstance: GoogleGenAI | null = null;

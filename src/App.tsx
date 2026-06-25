@@ -810,20 +810,28 @@ const Planner = ({ user }: { user: User }) => {
 const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!email.trim()) return;
     setLoading(true);
+    setError('');
     try {
       const res = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email })
+        body: JSON.stringify({ email: email.trim() })
       });
-      const user = await res.json();
-      onLogin(user);
+      const data = await res.json();
+      if (res.ok && !data.error) {
+        onLogin(data);
+      } else {
+        setError(data.error || 'Failed to authenticate. Please try again.');
+      }
     } catch (err) {
       console.error(err);
+      setError('A network error occurred. Please check your connection.');
     } finally {
       setLoading(false);
     }
@@ -849,6 +857,19 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
           <p className="text-slate-500 dark:text-slate-400 mt-2">Your gateway to the Zimbabwe Heritage-Based Curriculum (2024-2030).</p>
         </div>
 
+        {error && (
+          <motion.div 
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-5 p-4 rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-100 dark:border-red-900/40 text-red-600 dark:text-red-400 text-xs flex items-start gap-2"
+          >
+            <div className="flex-1 leading-relaxed">{error}</div>
+            <button onClick={() => setError('')} className="text-red-400 hover:text-red-600 dark:hover:text-red-300 cursor-pointer">
+              <X size={14} />
+            </button>
+          </motion.div>
+        )}
+
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-1">Email Address</label>
@@ -858,15 +879,18 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
               placeholder="you@student.com"
               className="w-full px-4 py-3 bg-blue-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white transition-colors"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                if (error) setError('');
+              }}
             />
           </div>
           <button
             type="submit"
-            disabled={loading || !email}
-            className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+            disabled={loading || !email.trim()}
+            className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
           >
-            {loading && <Loader2 className="animate-spin" size={20} />}
+            {loading ? <Loader2 className="animate-spin" size={20} /> : null}
             Continue
           </button>
         </form>
