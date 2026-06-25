@@ -829,9 +829,9 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
       } else {
         setError(data.error || 'Failed to authenticate. Please try again.');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setError('A network error occurred. Please check your connection.');
+      setError(`A network error occurred: ${err?.message || err}. Please check your connection.`);
     } finally {
       setLoading(false);
     }

@@ -26,149 +26,185 @@ const inMemoryTables: Record<string, any[]> = {
 };
 let lastInsertId = 1000;
 
+function createInMemoryFallback() {
+  return {
+    exec(sql: string) {
+      // Schema initialized dynamically in memory
+    },
+    prepare(sql: string) {
+      const sqlLower = sql.toLowerCase().trim().replace(/\s+/g, ' ');
+
+      return {
+        get(...params: any[]) {
+          // SELECT COUNT(*) as count FROM resources
+          if (sqlLower.includes("select count(*)")) {
+            return { count: inMemoryTables.resources.length };
+          }
+          // SELECT * FROM users WHERE email = ?
+          if (sqlLower.includes("select * from users where email =")) {
+            const email = params[0]?.toLowerCase().trim();
+            return inMemoryTables.users.find(u => u.email.toLowerCase().trim() === email) || null;
+          }
+          // SELECT * FROM users WHERE username = ?
+          if (sqlLower.includes("select * from users where username =")) {
+            const username = params[0]?.toLowerCase().trim();
+            return inMemoryTables.users.find(u => u.username.toLowerCase().trim() === username) || null;
+          }
+          return null;
+        },
+        all(...params: any[]) {
+          // SELECT DISTINCT subject FROM resources
+          if (sqlLower.includes("select distinct subject from resources")) {
+            const subjects = [...new Set(inMemoryTables.resources.map(r => r.subject))];
+            return subjects.map(s => ({ subject: s }));
+          }
+          // SELECT * FROM resources
+          if (sqlLower.includes("from resources")) {
+            return inMemoryTables.resources;
+          }
+          // SELECT * FROM flashcards WHERE user_id = ?
+          if (sqlLower.includes("from flashcards where user_id =")) {
+            const userId = Number(params[0]);
+            return inMemoryTables.flashcards.filter(c => Number(c.user_id) === userId);
+          }
+          // SELECT * FROM planner WHERE user_id = ?
+          if (sqlLower.includes("from planner where user_id =")) {
+            const userId = Number(params[0]);
+            return inMemoryTables.planner.filter(t => Number(t.user_id) === userId);
+          }
+          return [];
+        },
+        run(...params: any[]) {
+          lastInsertId++;
+
+          // INSERT INTO resources
+          if (sqlLower.includes("insert into resources")) {
+            const [title, type, subject, topic, content, author] = params;
+            inMemoryTables.resources.push({ id: lastInsertId, title, type, subject, topic, content, author });
+          }
+          // INSERT INTO flashcards
+          else if (sqlLower.includes("insert into flashcards")) {
+            const [userId, subject, question, answer] = params;
+            inMemoryTables.flashcards.push({ id: lastInsertId, user_id: userId, subject, question, answer });
+          }
+          // INSERT INTO planner
+          else if (sqlLower.includes("insert into planner")) {
+            const [userId, title, date] = params;
+            inMemoryTables.planner.push({ id: lastInsertId, user_id: userId, title, date, completed: 0 });
+          }
+          // INSERT INTO users
+          else if (sqlLower.includes("insert into users")) {
+            const [email, username] = params;
+            inMemoryTables.users.push({ id: lastInsertId, email, username });
+          }
+          // UPDATE planner SET completed = ? WHERE id = ?
+          else if (sqlLower.includes("update planner set completed")) {
+            const [completed, id] = params;
+            const task = inMemoryTables.planner.find(t => t.id === Number(id));
+            if (task) {
+              task.completed = completed ? 1 : 0;
+            }
+          }
+
+          return { lastInsertRowid: lastInsertId };
+        }
+      };
+    }
+  };
+}
+
 async function getDB() {
   if (dbInstance) return dbInstance;
 
+  const dbPath = process.env.NODE_ENV === 'production' ? '/tmp/studenthub.db' : 'studenthub.db';
+
+  const schemaSql = `
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE,
+      email TEXT UNIQUE,
+      password TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS resources (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT,
+      type TEXT,
+      subject TEXT,
+      topic TEXT,
+      content TEXT,
+      author TEXT,
+      url TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS flashcards (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER,
+      subject TEXT,
+      question TEXT,
+      answer TEXT,
+      FOREIGN KEY(user_id) REFERENCES users(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS planner (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER,
+      title TEXT,
+      date TEXT,
+      completed INTEGER DEFAULT 0,
+      FOREIGN KEY(user_id) REFERENCES users(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS favorites (
+      user_id INTEGER,
+      resource_id INTEGER,
+      PRIMARY KEY(user_id, resource_id),
+      FOREIGN KEY(user_id) REFERENCES users(id),
+      FOREIGN KEY(resource_id) REFERENCES resources(id)
+    );
+  `;
+
   try {
     const Database = require("better-sqlite3");
-    const dbPath = process.env.NODE_ENV === 'production' ? '/tmp/studenthub.db' : 'studenthub.db';
     dbInstance = new Database(dbPath);
     console.log(`Connected to SQLite database at ${dbPath}`);
+    dbInstance.exec(schemaSql);
     
-    // Initialize Database Schema if using standard SQLite
-    dbInstance.exec(`
-      CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT UNIQUE,
-        email TEXT UNIQUE,
-        password TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS resources (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        title TEXT,
-        type TEXT,
-        subject TEXT,
-        topic TEXT,
-        content TEXT,
-        author TEXT,
-        url TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS flashcards (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        subject TEXT,
-        question TEXT,
-        answer TEXT,
-        FOREIGN KEY(user_id) REFERENCES users(id)
-      );
-
-      CREATE TABLE IF NOT EXISTS planner (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        title TEXT,
-        date TEXT,
-        completed INTEGER DEFAULT 0,
-        FOREIGN KEY(user_id) REFERENCES users(id)
-      );
-
-      CREATE TABLE IF NOT EXISTS favorites (
-        user_id INTEGER,
-        resource_id INTEGER,
-        PRIMARY KEY(user_id, resource_id),
-        FOREIGN KEY(user_id) REFERENCES users(id),
-        FOREIGN KEY(resource_id) REFERENCES resources(id)
-      );
-    `);
-  } catch (e) {
-    console.warn("Failed to load native better-sqlite3 module. Initializing robust in-memory database fallback:", e);
-    isInMemoryFallback = true;
+    // Quick verification check to catch schema mismatch/corruption early
+    dbInstance.prepare("SELECT * FROM users LIMIT 1").get();
+    dbInstance.prepare("SELECT * FROM resources LIMIT 1").get();
+    dbInstance.prepare("SELECT * FROM flashcards LIMIT 1").get();
+    dbInstance.prepare("SELECT * FROM planner LIMIT 1").get();
+  } catch (e: any) {
+    console.warn("Database initialization failed or schema was mismatched, trying self-healing recreation:", e);
     
-    dbInstance = {
-      exec(sql: string) {
-        // Schema initialized dynamically in memory
-      },
-      prepare(sql: string) {
-        const sqlLower = sql.toLowerCase().trim().replace(/\s+/g, ' ');
-
-        return {
-          get(...params: any[]) {
-            // SELECT COUNT(*) as count FROM resources
-            if (sqlLower.includes("select count(*)")) {
-              return { count: inMemoryTables.resources.length };
-            }
-            // SELECT * FROM users WHERE email = ?
-            if (sqlLower.includes("select * from users where email =")) {
-              const email = params[0]?.toLowerCase().trim();
-              return inMemoryTables.users.find(u => u.email.toLowerCase().trim() === email) || null;
-            }
-            // SELECT * FROM users WHERE username = ?
-            if (sqlLower.includes("select * from users where username =")) {
-              const username = params[0]?.toLowerCase().trim();
-              return inMemoryTables.users.find(u => u.username.toLowerCase().trim() === username) || null;
-            }
-            return null;
-          },
-          all(...params: any[]) {
-            // SELECT DISTINCT subject FROM resources
-            if (sqlLower.includes("select distinct subject from resources")) {
-              const subjects = [...new Set(inMemoryTables.resources.map(r => r.subject))];
-              return subjects.map(s => ({ subject: s }));
-            }
-            // SELECT * FROM resources
-            if (sqlLower.includes("from resources")) {
-              return inMemoryTables.resources;
-            }
-            // SELECT * FROM flashcards WHERE user_id = ?
-            if (sqlLower.includes("from flashcards where user_id =")) {
-              const userId = Number(params[0]);
-              return inMemoryTables.flashcards.filter(c => Number(c.user_id) === userId);
-            }
-            // SELECT * FROM planner WHERE user_id = ?
-            if (sqlLower.includes("from planner where user_id =")) {
-              const userId = Number(params[0]);
-              return inMemoryTables.planner.filter(t => Number(t.user_id) === userId);
-            }
-            return [];
-          },
-          run(...params: any[]) {
-            lastInsertId++;
-
-            // INSERT INTO resources
-            if (sqlLower.includes("insert into resources")) {
-              const [title, type, subject, topic, content, author] = params;
-              inMemoryTables.resources.push({ id: lastInsertId, title, type, subject, topic, content, author });
-            }
-            // INSERT INTO flashcards
-            else if (sqlLower.includes("insert into flashcards")) {
-              const [userId, subject, question, answer] = params;
-              inMemoryTables.flashcards.push({ id: lastInsertId, user_id: userId, subject, question, answer });
-            }
-            // INSERT INTO planner
-            else if (sqlLower.includes("insert into planner")) {
-              const [userId, title, date] = params;
-              inMemoryTables.planner.push({ id: lastInsertId, user_id: userId, title, date, completed: 0 });
-            }
-            // INSERT INTO users
-            else if (sqlLower.includes("insert into users")) {
-              const [email, username] = params;
-              inMemoryTables.users.push({ id: lastInsertId, email, username });
-            }
-            // UPDATE planner SET completed = ? WHERE id = ?
-            else if (sqlLower.includes("update planner set completed")) {
-              const [completed, id] = params;
-              const task = inMemoryTables.planner.find(t => t.id === Number(id));
-              if (task) {
-                task.completed = completed ? 1 : 0;
-              }
-            }
-
-            return { lastInsertRowid: lastInsertId };
-          }
-        };
+    try {
+      if (dbInstance && typeof dbInstance.close === "function") {
+        dbInstance.close();
       }
-    };
+    } catch (_) {}
+    dbInstance = null;
+
+    try {
+      const fs = require("fs");
+      if (fs.existsSync(dbPath)) {
+        fs.unlinkSync(dbPath);
+        console.log("Successfully unlinked corrupted/mismatched SQLite file.");
+      }
+    } catch (fsErr) {
+      console.error("Failed to delete corrupted SQLite file:", fsErr);
+    }
+
+    try {
+      const Database = require("better-sqlite3");
+      dbInstance = new Database(dbPath);
+      dbInstance.exec(schemaSql);
+      console.log("Successfully recreated fresh database.");
+    } catch (retryErr) {
+      console.error("Database recreation failed. Falling back to robust in-memory database system:", retryErr);
+      isInMemoryFallback = true;
+      dbInstance = createInMemoryFallback();
+    }
   }
 
   // Seed initial data if database has no resources
