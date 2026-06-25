@@ -114,9 +114,14 @@ function createInMemoryFallback() {
 }
 
 async function getDB() {
-  if (dbInstance) return dbInstance;
+  console.log("[getDB] Starting database initialization...");
+  if (dbInstance) {
+    console.log("[getDB] Returning existing database instance.");
+    return dbInstance;
+  }
 
   const dbPath = process.env.NODE_ENV === 'production' ? '/tmp/studenthub.db' : 'studenthub.db';
+  console.log(`[getDB] Database path is: ${dbPath}`);
 
   const schemaSql = `
     CREATE TABLE IF NOT EXISTS users (
@@ -165,46 +170,34 @@ async function getDB() {
   `;
 
   try {
+    console.log("[getDB] Attempting to load better-sqlite3...");
     const Database = require("better-sqlite3");
-    dbInstance = new Database(dbPath);
-    console.log(`Connected to SQLite database at ${dbPath}`);
-    dbInstance.exec(schemaSql);
+    console.log("[getDB] better-sqlite3 loaded successfully. Opening database...");
     
+    // Attempt persistent SQLite file with a fast 1-second timeout to catch file locks instantly
+    try {
+      console.log(`[getDB] Trying persistent database file: ${dbPath}`);
+      dbInstance = new Database(dbPath, { timeout: 1000 });
+      dbInstance.exec(schemaSql);
+      console.log(`[getDB] Successfully connected to persistent SQLite database at ${dbPath}`);
+    } catch (fileErr: any) {
+      console.warn(`[getDB] Persistent SQLite file failed (${fileErr.message}). Falling back to real in-memory SQLite (":memory:")`);
+      dbInstance = new Database(":memory:", { timeout: 1000 });
+      dbInstance.exec(schemaSql);
+      console.log("[getDB] Successfully connected to real in-memory SQLite (':memory:')");
+    }
+
     // Quick verification check to catch schema mismatch/corruption early
+    console.log("[getDB] Running schema verification checks...");
     dbInstance.prepare("SELECT * FROM users LIMIT 1").get();
     dbInstance.prepare("SELECT * FROM resources LIMIT 1").get();
     dbInstance.prepare("SELECT * FROM flashcards LIMIT 1").get();
     dbInstance.prepare("SELECT * FROM planner LIMIT 1").get();
+    console.log("[getDB] Verification checks passed.");
   } catch (e: any) {
-    console.warn("Database initialization failed or schema was mismatched, trying self-healing recreation:", e);
-    
-    try {
-      if (dbInstance && typeof dbInstance.close === "function") {
-        dbInstance.close();
-      }
-    } catch (_) {}
-    dbInstance = null;
-
-    try {
-      const fs = require("fs");
-      if (fs.existsSync(dbPath)) {
-        fs.unlinkSync(dbPath);
-        console.log("Successfully unlinked corrupted/mismatched SQLite file.");
-      }
-    } catch (fsErr) {
-      console.error("Failed to delete corrupted SQLite file:", fsErr);
-    }
-
-    try {
-      const Database = require("better-sqlite3");
-      dbInstance = new Database(dbPath);
-      dbInstance.exec(schemaSql);
-      console.log("Successfully recreated fresh database.");
-    } catch (retryErr) {
-      console.error("Database recreation failed. Falling back to robust in-memory database system:", retryErr);
-      isInMemoryFallback = true;
-      dbInstance = createInMemoryFallback();
-    }
+    console.error("[getDB] better-sqlite3 completely failed to load/initialize. Falling back to custom mock in-memory DB:", e);
+    isInMemoryFallback = true;
+    dbInstance = createInMemoryFallback();
   }
 
   // Seed initial data if database has no resources
@@ -213,49 +206,60 @@ async function getDB() {
       const resourceCount = dbInstance.prepare("SELECT COUNT(*) as count FROM resources").get() as { count: number };
       return resourceCount ? resourceCount.count : 0;
     } catch (err) {
+      console.error("[getDB] Failed to get resource count:", err);
       return 0;
     }
   };
 
+  console.log("[getDB] Checking resource count for seeding...");
   if (getResourceCount() === 0) {
-    const insertResource = dbInstance.prepare("INSERT INTO resources (title, type, subject, topic, content, author) VALUES (?, ?, ?, ?, ?, ?)");
-    
-    const seedData = [
-      // Core Areas & Compulsory Subjects
-      ["Heritage Studies Grade 7", "book", "Heritage Studies", "National Values", "Exploring Zimbabwean history and Ubuntu principles.", "Ministry of Education"],
-      ["Mathematics Form 1", "book", "Mathematics", "Algebra", "Foundational algebra for secondary students.", "ZIMSEC"],
-      ["Combined Science Notes", "note", "Combined Science", "Biology", "Summary of biological systems for O-Level.", "StudyHub"],
-      ["English Language Guide", "book", "English", "Composition", "Improving creative writing and grammar.", "Oxford Press"],
-      ["Shona Literature", "book", "Indigenous Languages", "Poetry", "Analysis of modern Shona poetry.", "ZPH"],
+    console.log("[getDB] Database is empty, seeding initial resources...");
+    try {
+      const insertResource = dbInstance.prepare("INSERT INTO resources (title, type, subject, topic, content, author) VALUES (?, ?, ?, ?, ?, ?)");
+      
+      const seedData = [
+        // Core Areas & Compulsory Subjects
+        ["Heritage Studies Grade 7", "book", "Heritage Studies", "National Values", "Exploring Zimbabwean history and Ubuntu principles.", "Ministry of Education"],
+        ["Mathematics Form 1", "book", "Mathematics", "Algebra", "Foundational algebra for secondary students.", "ZIMSEC"],
+        ["Combined Science Notes", "note", "Combined Science", "Biology", "Summary of biological systems for O-Level.", "StudyHub"],
+        ["English Language Guide", "book", "English", "Composition", "Improving creative writing and grammar.", "Oxford Press"],
+        ["Shona Literature", "book", "Indigenous Languages", "Poetry", "Analysis of modern Shona poetry.", "ZPH"],
 
-      // STEM Pathway
-      ["Software Engineering Basics", "note", "Software Engineering", "SDLC", "Introduction to the Software Development Life Cycle.", "Dev Academy"],
-      ["Computer Science: Python", "book", "Computer Science", "Programming", "Learning Python for A-Level Computer Science.", "TechBooks"],
-      ["Physics: Mechanics", "note", "Physics", "Forces", "Notes on Newton's laws and motion.", "Science Pro"],
-      ["Biology: Genetics", "book", "Biology", "DNA", "Comprehensive guide to genetic engineering.", "BioWorld"],
+        // STEM Pathway
+        ["Software Engineering Basics", "note", "Software Engineering", "SDLC", "Introduction to the Software Development Life Cycle.", "Dev Academy"],
+        ["Computer Science: Python", "book", "Computer Science", "Programming", "Learning Python for A-Level Computer Science.", "TechBooks"],
+        ["Physics: Mechanics", "note", "Physics", "Forces", "Notes on Newton's laws and motion.", "Science Pro"],
+        ["Biology: Genetics", "book", "Biology", "DNA", "Comprehensive guide to genetic engineering.", "BioWorld"],
 
-      // Humanities & Commercials
-      ["Geography of Zimbabwe", "book", "Geography", "Physical Geography", "Study of Zimbabwe's landforms and climate.", "GeoPress"],
-      ["Economics: Macroeconomics", "note", "Economics", "GDP", "Understanding national income and growth.", "Finance Hub"],
-      ["Business Enterprise", "book", "Business Enterprise", "Entrepreneurship", "Starting and managing a business in Zimbabwe.", "SME Connect"],
-      ["Principles of Accounts", "note", "Principles of Accounts", "Ledgers", "Basic accounting principles and bookkeeping.", "Accountant Pro"],
+        // Humanities & Commercials
+        ["Geography of Zimbabwe", "book", "Geography", "Physical Geography", "Study of Zimbabwe's landforms and climate.", "GeoPress"],
+        ["Economics: Macroeconomics", "note", "Economics", "GDP", "Understanding national income and growth.", "Finance Hub"],
+        ["Business Enterprise", "book", "Business Enterprise", "Entrepreneurship", "Starting and managing a business in Zimbabwe.", "SME Connect"],
+        ["Principles of Accounts", "note", "Principles of Accounts", "Ledgers", "Basic accounting principles and bookkeeping.", "Accountant Pro"],
 
-      // Technical & Vocational
-      ["Agriculture: Crop Science", "book", "Agriculture", "Maize Production", "Best practices for maize farming in Zimbabwe.", "AgriZim"],
-      ["Wood Technology Projects", "note", "Wood Technology", "Joinery", "Guide to basic woodworking joints.", "Craftsman"],
-      ["Food Technology", "book", "Food Technology", "Nutrition", "Study of food processing and preservation.", "Home Science"],
+        // Technical & Vocational
+        ["Agriculture: Crop Science", "book", "Agriculture", "Maize Production", "Best practices for maize farming in Zimbabwe.", "AgriZim"],
+        ["Wood Technology Projects", "note", "Wood Technology", "Joinery", "Guide to basic woodworking joints.", "Craftsman"],
+        ["Food Technology", "book", "Food Technology", "Nutrition", "Study of food processing and preservation.", "Home Science"],
 
-      // Arts & Physical Education
-      ["Visual Arts: Shona Sculpture", "book", "Visual Arts", "Sculpture", "History and techniques of stone carving.", "Art Gallery"],
-      ["Theatre Arts: Performance", "note", "Theatre Arts", "Acting", "Techniques for stage performance and drama.", "Drama Club"],
-      ["Physical Education: Athletics", "note", "Physical Education", "Track & Field", "Training guide for competitive athletics.", "Sports Academy"]
-    ];
+        // Arts & Physical Education
+        ["Visual Arts: Shona Sculpture", "book", "Visual Arts", "Sculpture", "History and techniques of stone carving.", "Art Gallery"],
+        ["Theatre Arts: Performance", "note", "Theatre Arts", "Acting", "Techniques for stage performance and drama.", "Drama Club"],
+        ["Physical Education: Athletics", "note", "Physical Education", "Track & Field", "Training guide for competitive athletics.", "Sports Academy"]
+      ];
 
-    for (const row of seedData) {
-      insertResource.run(...row);
+      for (const row of seedData) {
+        insertResource.run(...row);
+      }
+      console.log("[getDB] Seed completed successfully.");
+    } catch (seedErr) {
+      console.error("[getDB] Seeding failed:", seedErr);
     }
+  } else {
+    console.log("[getDB] Resources already seeded.");
   }
 
+  console.log("[getDB] Database ready.");
   return dbInstance;
 }
 
@@ -354,38 +358,55 @@ app.patch("/api/planner/:id", async (req, res) => {
 });
 
 app.post("/api/login", async (req, res) => {
+  console.log("[/api/login] Received login request:", req.body);
   const { email } = req.body;
   if (!email || typeof email !== "string" || !email.includes("@")) {
+    console.log("[/api/login] Invalid email provided:", email);
     return res.status(400).json({ error: "Please enter a valid email address." });
   }
 
   try {
+    console.log("[/api/login] Fetching DB instance...");
     const db = await getDB();
     const trimmedEmail = email.trim();
+    console.log("[/api/login] Looking up user by email:", trimmedEmail);
     let user = db.prepare("SELECT * FROM users WHERE email = ?").get(trimmedEmail) as any;
+    console.log("[/api/login] Lookup result:", user);
     
     if (!user) {
+      console.log("[/api/login] User not found. Creating a new user...");
       let username = trimmedEmail.split("@")[0].replace(/[^a-zA-Z0-9_]/g, "");
       if (!username) {
         username = "student";
       }
 
       // Ensure username is unique to satisfy UNIQUE constraint
+      console.log("[/api/login] Checking username uniqueness for:", username);
       let existing = db.prepare("SELECT * FROM users WHERE username = ?").get(username);
       let count = 1;
       const originalUsername = username;
+      console.log("[/api/login] Pre-loop existing status:", existing ? "Found" : "Not Found");
       while (existing) {
         username = `${originalUsername}${count}`;
+        console.log(`[/api/login] Username clash found. Trying: ${username}`);
         existing = db.prepare("SELECT * FROM users WHERE username = ?").get(username);
         count++;
+        if (count > 100) {
+          console.warn("[/api/login] Uniqueness loop limit exceeded. Forcing exit.");
+          break;
+        }
       }
 
+      console.log("[/api/login] Final decided username:", username);
+      console.log("[/api/login] Inserting new user into database...");
       const info = db.prepare("INSERT INTO users (email, username) VALUES (?, ?)").run(trimmedEmail, username);
+      console.log("[/api/login] Insertion info:", info);
       user = { id: info.lastInsertRowid, email: trimmedEmail, username };
     }
+    console.log("[/api/login] Successful login for user:", user);
     res.json(user);
   } catch (error: any) {
-    console.error("Login error:", error);
+    console.error("[/api/login] Login error caught:", error);
     res.status(500).json({ error: error.message || "Failed to log in." });
   }
 });
