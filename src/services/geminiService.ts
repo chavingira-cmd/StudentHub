@@ -1,10 +1,10 @@
-export async function generateStudyNotes(topic: string) {
+export async function generateStudyNotes(topic: string, supportingDocuments?: { name: string; content: string }[]) {
   const response = await fetch("/api/generate-notes", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ topic }),
+    body: JSON.stringify({ topic, supportingDocuments }),
   });
 
   if (!response.ok) {

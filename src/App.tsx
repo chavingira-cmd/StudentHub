@@ -24,7 +24,10 @@ import {
   Bot,
   Send,
   MessageSquare,
-  Telescope
+  Telescope,
+  Paperclip,
+  Upload,
+  ShieldCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import Markdown from 'react-markdown';
@@ -41,6 +44,203 @@ interface BeforeInstallPromptEvent extends Event {
   }>;
   prompt(): Promise<void>;
 }
+
+// --- Local Supporting Document Helpers & Components (Held locally on user device) ---
+
+interface LocalAttachedFile {
+  id: string;
+  name: string;
+  size: number;
+  content: string;
+  category?: 'Syllabus' | 'Past Papers' | 'Textbook' | 'General';
+}
+
+const extractTextFromFile = async (file: File): Promise<string> => {
+  if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        try {
+          const arr = new Uint8Array(e.target?.result as ArrayBuffer);
+          if (!(window as any).pdfjsLib) {
+            await new Promise<void>((res, rej) => {
+              const script = document.createElement('script');
+              script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.js';
+              script.onload = () => res();
+              script.onerror = () => rej(new Error('Failed to load local PDF parser.'));
+              document.head.appendChild(script);
+            });
+          }
+          const pdfjsLib = (window as any).pdfjsLib;
+          pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+          
+          const loadingTask = pdfjsLib.getDocument({ data: arr });
+          const pdf = await loadingTask.promise;
+          let fullText = '';
+          for (let i = 1; i <= pdf.numPages; i++) {
+            const page = await pdf.getPage(i);
+            const textContent = await page.getTextContent();
+            const pageText = textContent.items.map((item: any) => item.str).join(' ');
+            fullText += pageText + '\n';
+          }
+          resolve(fullText);
+        } catch (err) {
+          reject(new Error("Unable to parse this PDF. Please verify it is not password-protected."));
+        }
+      };
+      reader.onerror = () => reject(new Error('Failed to read file.'));
+      reader.readAsArrayBuffer(file);
+    });
+  } else {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        resolve(e.target?.result as string || '');
+      };
+      reader.onerror = () => reject(new Error('Failed to read file.'));
+      reader.readAsText(file);
+    });
+  }
+};
+
+const LocalDocumentUploader = ({ 
+  attachedFiles, 
+  onAttach, 
+  onRemove,
+  onUpdateCategory
+}: { 
+  attachedFiles: LocalAttachedFile[]; 
+  onAttach: (file: LocalAttachedFile) => void; 
+  onRemove: (id: string) => void; 
+  onUpdateCategory?: (id: string, category: 'Syllabus' | 'Past Papers' | 'Textbook' | 'General') => void;
+}) => {
+  const [parsing, setParsing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    
+    setParsing(true);
+    setError(null);
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        if (attachedFiles.some(f => f.name === file.name)) {
+          continue;
+        }
+        const content = await extractTextFromFile(file);
+        if (content.trim().length === 0) {
+          throw new Error(`The file "${file.name}" appears to be empty.`);
+        }
+        onAttach({
+          id: Math.random().toString(36).substring(2, 9),
+          name: file.name,
+          size: file.size,
+          content,
+          category: 'General'
+        });
+      }
+    } catch (err: any) {
+      setError(err.message || "Failed to read file");
+    } finally {
+      setParsing(false);
+      e.target.value = '';
+    }
+  };
+
+  const formatSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / 1048576).toFixed(1)} MB`;
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 bg-slate-50 dark:bg-slate-800/40 border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
+            <Paperclip size={20} />
+          </div>
+          <div>
+            <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200">Supporting Reference Documents</h4>
+            <p className="text-xs text-slate-400 dark:text-slate-500 leading-normal">
+              Attach Syllabus, past papers or lesson outlines (PDF, TXT, MD). Held entirely in memory on your device.
+            </p>
+          </div>
+        </div>
+        <div className="relative shrink-0 flex items-center">
+          <input
+            type="file"
+            multiple
+            accept=".pdf,.txt,.md,.csv,.json"
+            onChange={handleFileChange}
+            id="local-doc-input"
+            className="hidden"
+            disabled={parsing}
+          />
+          <label
+            htmlFor="local-doc-input"
+            className={cn(
+              "inline-flex items-center gap-2 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800/80 text-slate-700 dark:text-slate-300 font-bold text-xs px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 transition-colors shadow-sm cursor-pointer",
+              parsing && "opacity-50 pointer-events-none"
+            )}
+          >
+            {parsing ? <Loader2 className="animate-spin" size={14} /> : <Upload size={14} />}
+            Attach Document
+          </label>
+        </div>
+      </div>
+
+      {error && (
+        <p className="text-xs text-rose-500 font-medium px-1 flex items-center gap-1">
+          ⚠️ {error}
+        </p>
+      )}
+
+      {attachedFiles.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          {attachedFiles.map((file) => (
+            <div 
+              key={file.id} 
+              className="flex items-center gap-2.5 bg-blue-50/60 dark:bg-blue-900/10 border border-blue-100/60 dark:border-blue-900/30 text-blue-700 dark:text-blue-400 px-3.5 py-1.5 rounded-xl text-xs font-medium animate-fadeIn shadow-xs"
+            >
+              <div className="flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" title="Loaded locally" />
+                <span className="truncate max-w-[120px] font-semibold" title={file.name}>{file.name}</span>
+                <span className="text-[10px] text-blue-400 font-mono">({formatSize(file.size)})</span>
+              </div>
+              <div className="flex items-center gap-1 shrink-0 border-l border-blue-200/40 dark:border-blue-900/40 pl-2">
+                <span className="text-[10px] text-slate-400 dark:text-slate-500 font-medium">Tag:</span>
+                <select
+                  value={file.category || 'General'}
+                  onChange={(e) => onUpdateCategory?.(file.id, e.target.value as any)}
+                  className="bg-white/95 dark:bg-slate-900 text-[10px] font-bold text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-800 px-1.5 py-0.5 rounded-md cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-500"
+                >
+                  <option value="General">General</option>
+                  <option value="Syllabus">Syllabus</option>
+                  <option value="Past Papers">Past Papers</option>
+                  <option value="Textbook">Textbook</option>
+                </select>
+              </div>
+              <button
+                type="button"
+                onClick={() => onRemove(file.id)}
+                className="text-blue-400 hover:text-rose-500 dark:hover:text-rose-400 transition-colors cursor-pointer ml-1"
+                title="Remove document"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          ))}
+          <div className="inline-flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold px-2.5 py-1 bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-100/50 dark:border-emerald-900/30 rounded-xl">
+            <ShieldCheck size={12} /> Held 100% on device
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 // --- Components ---
 
@@ -386,12 +586,14 @@ const Notes = () => {
   const [topic, setTopic] = useState('');
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
+  const [attachedFiles, setAttachedFiles] = useState<LocalAttachedFile[]>([]);
 
   const handleGenerate = async () => {
     if (!topic) return;
     setLoading(true);
     try {
-      const result = await generateStudyNotes(topic);
+      const docsPayload = attachedFiles.map(f => ({ name: f.name, content: f.content, category: f.category || 'General' }));
+      const result = await generateStudyNotes(topic, docsPayload);
       setNotes(result || '');
     } catch (err) {
       console.error(err);
@@ -418,12 +620,19 @@ const Notes = () => {
         <button
           onClick={handleGenerate}
           disabled={loading || !topic}
-          className="bg-blue-600 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-blue-700 transition-colors disabled:opacity-50"
+          className="bg-blue-600 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-blue-700 transition-colors disabled:opacity-50 cursor-pointer"
         >
           {loading ? <Loader2 className="animate-spin" size={20} /> : <Sparkles size={20} />}
           Generate
         </button>
       </div>
+
+      <LocalDocumentUploader
+        attachedFiles={attachedFiles}
+        onAttach={(file) => setAttachedFiles(prev => [...prev, file])}
+        onRemove={(id) => setAttachedFiles(prev => prev.filter(f => f.id !== id))}
+        onUpdateCategory={(id, category) => setAttachedFiles(prev => prev.map(f => f.id === id ? { ...f, category } : f))}
+      />
 
       <AnimatePresence mode="wait">
         {notes && (
@@ -793,6 +1002,7 @@ const TutorChatbot = () => {
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [attachedFiles, setAttachedFiles] = useState<LocalAttachedFile[]>([]);
   const chatEndRef = React.useRef<HTMLDivElement>(null);
 
   const quickPrompts = [
@@ -819,7 +1029,8 @@ const TutorChatbot = () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          messages: [...messages, userMessage] 
+          messages: [...messages, userMessage],
+          supportingDocuments: attachedFiles.map(f => ({ name: f.name, content: f.content, category: f.category || 'General' }))
         })
       });
       const data = await res.json();
@@ -854,6 +1065,13 @@ const TutorChatbot = () => {
           <p className="text-slate-500 dark:text-slate-400">Your lightning-fast companion for study summaries, explanations, and quick quizzes.</p>
         </div>
       </header>
+
+      <LocalDocumentUploader
+        attachedFiles={attachedFiles}
+        onAttach={(file) => setAttachedFiles(prev => [...prev, file])}
+        onRemove={(id) => setAttachedFiles(prev => prev.filter(f => f.id !== id))}
+        onUpdateCategory={(id, category) => setAttachedFiles(prev => prev.map(f => f.id === id ? { ...f, category } : f))}
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Left Side Info / Quick Chips */}

@@ -310,8 +310,15 @@ async function generateAIResponse({
   throw lastError || new Error("AI generation failed with all available models.");
 }
 
+function buildDocsContext(docs?: { name: string; content: string }[]) {
+  if (!docs || docs.length === 0) return "";
+  return "\n\n=== SUPPORTING DOCUMENTS (HELD LOCALLY BY USER) ===\n" + 
+    docs.map(doc => `[Document: ${doc.name}]\n${doc.content}`).join("\n\n") + 
+    "\n==================================================\n";
+}
+
 app.post("/api/chatbot", async (req, res) => {
-  const { messages } = req.body;
+  const { messages, supportingDocuments } = req.body;
   
   if (!messages || !Array.isArray(messages)) {
     return res.status(400).json({ error: "Messages array is required" });
@@ -320,11 +327,23 @@ app.post("/api/chatbot", async (req, res) => {
   try {
     const systemInstruction = "You are 'StudenthubAI', the friendly AI Study Tutor for StudentHub, aligned with the Zimbabwe Heritage-Based Curriculum (2024-2030). Your goal is to make learning easy, engaging, and extremely accessible for students. Since students can sometimes find long texts overwhelming, you must: 1. Explain complex academic concepts in simple, digestible, and friendly language. 2. Use bullet points, bold text, and brief summaries to break up information. 3. Be friendly and encourage the Ubuntu principle ('Hunhu/Unhu') and cultural pride. 4. Offer to quiz them, build fun study rhymes/songs, or explain processes using analogies matching local Zimbabwean contexts (e.g. comparing database indexing to sorting bags of grain or comparing CPU cache to quick-access tools at a domestic forge). Focus on being extremely clear so they don't have to read massive textbooks! Keep your answers relatively concise, highly engaging, and formatted beautifully in Markdown.";
 
-    const text = await generateAIResponse({
-      messages: messages.map(m => ({
+    const docContext = buildDocsContext(supportingDocuments);
+    const enhancedMessages = messages.map((m, idx) => {
+      const isLastUserMsg = m.role !== "assistant" && idx === messages.length - 1;
+      if (isLastUserMsg && docContext) {
+        return {
+          role: m.role === "assistant" ? "assistant" : "user",
+          content: (m.text || m.content) + docContext
+        };
+      }
+      return {
         role: m.role === "assistant" ? "assistant" : "user",
         content: m.text || m.content
-      })),
+      };
+    });
+
+    const text = await generateAIResponse({
+      messages: enhancedMessages,
       systemInstruction
     });
 
@@ -336,18 +355,19 @@ app.post("/api/chatbot", async (req, res) => {
 });
 
 app.post("/api/generate-notes", async (req, res) => {
-  const { topic } = req.body;
+  const { topic, supportingDocuments } = req.body;
   if (!topic) {
     return res.status(400).json({ error: "Topic is required" });
   }
 
   try {
     const systemInstruction = "You are an expert curriculum planner and study assistant, highly knowledgeable about the Zimbabwe Heritage-Based Curriculum.";
+    const docContext = buildDocsContext(supportingDocuments);
     const notesText = await generateAIResponse({
       messages: [
         {
           role: "user",
-          content: `Generate comprehensive study notes for the topic: ${topic}. Include key concepts, definitions, and a summary. Format as Markdown.`
+          content: `Generate comprehensive study notes for the topic: ${topic}. Include key concepts, definitions, and a summary. Format as Markdown.${docContext}`
         }
       ],
       systemInstruction
