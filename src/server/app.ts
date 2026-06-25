@@ -3,6 +3,7 @@ import Database from "better-sqlite3";
 import path from "path";
 import { fileURLToPath } from "url";
 import { GoogleGenAI } from "@google/genai";
+import OpenAI from "openai";
 import multer from "multer";
 // @ts-ignore
 import pdf from "pdf-parse";
@@ -208,6 +209,17 @@ function getAI() {
   return aiInstance;
 }
 
+let openaiInstance: OpenAI | null = null;
+function getOpenAIClient() {
+  if (!openaiInstance) {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (apiKey) {
+      openaiInstance = new OpenAI({ apiKey });
+    }
+  }
+  return openaiInstance;
+}
+
 app.post("/api/chatbot", async (req, res) => {
   const { messages, documentContext } = req.body;
   
@@ -216,13 +228,36 @@ app.post("/api/chatbot", async (req, res) => {
   }
 
   try {
-    const ai = getAI();
     let systemInstruction = "You are 'StudenthubAI', the friendly AI Study Tutor for StudentHub, aligned with the Zimbabwe Heritage-Based Curriculum (2024-2030). Your goal is to make learning easy, engaging, and extremely accessible for students. Since students can sometimes find long texts overwhelming, you must: 1. Explain complex academic concepts in simple, digestible, and friendly language. 2. Use bullet points, bold text, and brief summaries to break up information. 3. Be friendly and encourage the Ubuntu principle ('Hunhu/Unhu') and cultural pride. 4. Offer to quiz them, build fun study rhymes/songs, or explain processes using analogies matching local Zimbabwean contexts (e.g. comparing database indexing to sorting bags of grain or comparing CPU cache to quick-access tools at a domestic forge). Focus on being extremely clear so they don't have to read massive textbooks! Keep your answers relatively concise, highly engaging, and formatted beautifully in Markdown.";
 
     if (documentContext) {
       systemInstruction += `\n\n[ATTACHED DOCUMENT CONTEXT]\nThe student has attached a syllabus or study document. Use the following content extracted from this document as your primary reference and context source to answer, search, or summarize according to their prompts:\n${documentContext}\n[END OF ATTACHED DOCUMENT CONTEXT]`;
     }
 
+    const openai = getOpenAIClient();
+    if (openai) {
+      try {
+        const chatMessages = [
+          { role: "system" as const, content: systemInstruction },
+          ...messages.map(m => ({
+            role: m.role === "model" || m.role === "assistant" ? ("assistant" as const) : ("user" as const),
+            content: m.text || m.content
+          }))
+        ];
+        const response = await openai.chat.completions.create({
+          model: "gpt-4o-mini",
+          messages: chatMessages,
+        });
+        const replyText = response.choices[0]?.message?.content;
+        if (replyText) {
+          return res.json({ text: replyText });
+        }
+      } catch (err) {
+        console.error("OpenAI chatbot request failed, falling back to Gemini:", err);
+      }
+    }
+
+    const ai = getAI();
     const response = await ai.models.generateContent({
       model: "gemini-3.5-flash",
       contents: messages.map(m => ({
